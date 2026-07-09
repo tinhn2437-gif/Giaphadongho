@@ -848,8 +848,61 @@ tr:hover td {
 }
 
 .person-list {
+  flex: 1 1 auto;
+  min-height: 220px;
   overflow: auto;
   padding: 8px;
+}
+
+.viewer-account-box {
+  flex: 0 0 auto;
+  padding: 12px;
+  border-top: 1px solid var(--line);
+  background: rgba(255, 248, 220, 0.74);
+}
+
+.viewer-account-box h3 {
+  margin: 0 0 10px;
+  color: var(--muted);
+  font-size: 14px;
+  text-transform: uppercase;
+}
+
+.viewer-account-form {
+  display: grid;
+  gap: 8px;
+}
+
+.viewer-account-form input {
+  width: 100%;
+  min-height: 36px;
+  padding: 8px 9px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffdf2;
+}
+
+.viewer-account-form .btn {
+  width: 100%;
+}
+
+.viewer-account-list {
+  max-height: 170px;
+  margin-top: 10px;
+  overflow: auto;
+}
+
+.viewer-account-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 0;
+  border-top: 1px solid rgba(198, 146, 57, 0.38);
+}
+
+.viewer-account-row small {
+  color: var(--muted);
 }
 
 .admin-person-row {

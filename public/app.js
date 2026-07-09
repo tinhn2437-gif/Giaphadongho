@@ -12,7 +12,7 @@ const state = {
   authenticated: false,
   viewerAuthenticated: false,
   viewerUser: null,
-  viewerAuthMode: "login",
+  viewerAccounts: [],
   menuOpen: false,
   editingId: "",
   adminQuery: "",
@@ -94,6 +94,15 @@ async function loadViewerSession() {
     state.staticMode = true;
     state.viewerUser = staticViewerUser();
     state.viewerAuthenticated = !!state.viewerUser;
+  }
+}
+
+async function loadViewerAccounts() {
+  try {
+    const result = await api("/api/admin/users");
+    state.viewerAccounts = result.users || [];
+  } catch (error) {
+    state.viewerAccounts = [];
   }
 }
 
@@ -588,20 +597,17 @@ function renderPublic() {
 }
 
 function renderViewerAuth() {
-  const isRegister = state.viewerAuthMode === "register";
   app.innerHTML = `
     <div class="app-shell">
       ${topbar(false)}
       <main class="login-screen viewer-login-screen">
         <form class="login-panel viewer-login-panel" id="viewerAuthForm">
-          <h2>${isRegister ? "Đăng ký xem gia phả" : "Đăng nhập xem gia phả"}</h2>
-          <p class="notice">${state.staticMode ? "Bản GitHub Pages chỉ khóa giao diện trên trình duyệt. Muốn bảo mật thật cần chạy bản server online." : "Đăng nhập để xem thông tin gia phả dòng họ."}</p>
-          ${isRegister ? `<div class="field"><label>Họ tên hiển thị</label><input name="displayName" autocomplete="name"></div>` : ""}
+          <h2>Đăng nhập xem gia phả</h2>
+          <p class="notice">Tài khoản xem gia phả do admin tạo. Nếu chưa có tài khoản, hãy liên hệ người quản trị dòng họ.</p>
           <div class="field"><label>Tài khoản</label><input name="username" autocomplete="username" required></div>
-          <div class="field"><label>Mật khẩu</label><input name="password" type="password" autocomplete="${isRegister ? "new-password" : "current-password"}" required></div>
+          <div class="field"><label>Mật khẩu</label><input name="password" type="password" autocomplete="current-password" required></div>
           <div class="form-actions">
-            <button class="btn" type="submit">${isRegister ? "Đăng ký" : "Đăng nhập"}</button>
-            <button class="ghost-btn" id="switchViewerAuth" type="button">${isRegister ? "Đã có tài khoản" : "Tạo tài khoản"}</button>
+            <button class="btn" type="submit">Đăng nhập</button>
           </div>
         </form>
         <div id="toastRoot"></div>
@@ -609,10 +615,6 @@ function renderViewerAuth() {
     </div>
   `;
   $("#viewerAuthForm").addEventListener("submit", handleViewerAuth);
-  $("#switchViewerAuth").addEventListener("click", () => {
-    state.viewerAuthMode = isRegister ? "login" : "register";
-    renderViewerAuth();
-  });
 }
 
 function renderControlMenu(stats) {
@@ -1082,27 +1084,20 @@ async function handleViewerAuth(event) {
   const form = new FormData(event.currentTarget);
   const username = String(form.get("username") || "").trim();
   const password = String(form.get("password") || "").trim();
-  const displayName = String(form.get("displayName") || "").trim();
   try {
     if (state.staticMode) {
       const accounts = JSON.parse(localStorage.getItem("family_viewer_accounts") || "{}");
-      if (state.viewerAuthMode === "register") {
-        if (username.length < 3 || password.length < 6) throw new Error("Tài khoản cần từ 3 ký tự, mật khẩu từ 6 ký tự.");
-        if (accounts[username]) throw new Error("Tài khoản này đã tồn tại.");
-        accounts[username] = { username, displayName: displayName || username, password };
-        localStorage.setItem("family_viewer_accounts", JSON.stringify(accounts));
-      } else if (!accounts[username] || accounts[username].password !== password) {
+      if (!accounts[username] || accounts[username].password !== password) {
         throw new Error("Sai tài khoản hoặc mật khẩu.");
       }
-      state.viewerUser = { username, displayName: accounts[username]?.displayName || displayName || username };
+      state.viewerUser = { username, displayName: accounts[username]?.displayName || username };
       localStorage.setItem("family_viewer_user", JSON.stringify(state.viewerUser));
     } else {
-      const path = state.viewerAuthMode === "register" ? "/api/register" : "/api/view-login";
-      const result = await api(path, {
+      const result = await api("/api/view-login", {
         method: "POST",
-        body: JSON.stringify({ username, password, displayName }),
+        body: JSON.stringify({ username, password }),
       });
-      state.viewerUser = result.user || { username, displayName };
+      state.viewerUser = result.user || { username };
     }
     state.viewerAuthenticated = true;
     await loadData();
@@ -1257,6 +1252,7 @@ async function renderAdmin() {
     return;
   }
   await loadData();
+  await loadViewerAccounts();
   renderAdminPanel();
 }
 
@@ -1303,6 +1299,23 @@ function renderAdminPanel() {
                   <span><strong>${esc(person.fullName)}</strong><br><span class="person-meta">${esc(person.familyRole || person.job || personResidence(person) || "Chưa cập nhật")}</span></span>
                 </button>
               `).join("")}
+            </div>
+            <div class="viewer-account-box">
+              <h3>Tài khoản xem</h3>
+              <form id="viewerAccountForm" class="viewer-account-form">
+                <input name="displayName" placeholder="Tên hiển thị">
+                <input name="username" placeholder="Tài khoản" autocomplete="off" required>
+                <input name="password" type="password" placeholder="Mật khẩu" autocomplete="new-password" required>
+                <button class="btn" type="submit">Tạo tài khoản</button>
+              </form>
+              <div class="viewer-account-list">
+                ${state.viewerAccounts.length ? state.viewerAccounts.map((user) => `
+                  <div class="viewer-account-row">
+                    <span><strong>${esc(user.displayName || user.username)}</strong><br><small>${esc(user.username)}</small></span>
+                    <button class="text-btn delete-viewer-user" data-username="${esc(user.username)}" type="button">Xóa</button>
+                  </div>
+                `).join("") : `<p class="notice">Chưa có tài khoản xem nào.</p>`}
+              </div>
             </div>
           </aside>
           <section class="admin-panel">
@@ -1406,6 +1419,10 @@ function bindAdmin() {
     });
   });
   $("#personForm").addEventListener("submit", savePerson);
+  $("#viewerAccountForm")?.addEventListener("submit", createViewerAccount);
+  $$(".delete-viewer-user").forEach((button) => {
+    button.addEventListener("click", () => deleteViewerAccount(button.dataset.username));
+  });
   $("#personForm select[name=\"familyRole\"]")?.addEventListener("change", updateRoleFields);
   $("#personForm select[name=\"husbandId\"]")?.addEventListener("change", updateInLawPreview);
   $("#deleteBtn")?.addEventListener("click", deletePerson);
@@ -1413,6 +1430,40 @@ function bindAdmin() {
   $("#importJson").addEventListener("change", importJson);
   $("#importCsv").addEventListener("change", importCsv);
   updateRoleFields();
+}
+
+async function createViewerAccount(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const formData = new FormData(form);
+  try {
+    await api("/api/admin/users", {
+      method: "POST",
+      body: JSON.stringify({
+        displayName: formData.get("displayName"),
+        username: formData.get("username"),
+        password: formData.get("password"),
+      }),
+    });
+    form.reset();
+    await loadViewerAccounts();
+    renderAdminPanel();
+    toast("Đã tạo tài khoản xem.");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function deleteViewerAccount(username) {
+  if (!username || !confirm(`Xóa tài khoản ${username}?`)) return;
+  try {
+    await api(`/api/admin/users/${encodeURIComponent(username)}`, { method: "DELETE" });
+    await loadViewerAccounts();
+    renderAdminPanel();
+    toast("Đã xóa tài khoản xem.");
+  } catch (error) {
+    toast(error.message);
+  }
 }
 
 function updateRoleFields() {

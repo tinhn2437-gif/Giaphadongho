@@ -238,14 +238,13 @@ async function handleAdminLogin(request, env) {
   return json({ ok: true }, 200, { "Set-Cookie": makeCookie(ADMIN_COOKIE, token, 604800) });
 }
 
-async function handleRegister(request, env) {
-  const payload = await bodyJson(request);
+async function createViewerUser(env, payload) {
   const username = normalizeUsername(payload.username);
   const password = clean(payload.password);
   const displayName = clean(payload.displayName).slice(0, 80) || username;
-  if (username.length < 3) return json({ error: "Tài khoản cần từ 3 ký tự trở lên." }, 400);
-  if (password.length < 6) return json({ error: "Mật khẩu cần từ 6 ký tự trở lên." }, 400);
-  if (await getUser(env, username)) return json({ error: "Tài khoản này đã tồn tại." }, 409);
+  if (username.length < 3) return { error: "Tài khoản cần từ 3 ký tự trở lên.", status: 400 };
+  if (password.length < 6) return { error: "Mật khẩu cần từ 6 ký tự trở lên.", status: 400 };
+  if (await getUser(env, username)) return { error: "Tài khoản này đã tồn tại.", status: 409 };
 
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const hash = await passwordHash(password, salt, PASSWORD_ITERATIONS);
@@ -261,7 +260,40 @@ async function handleRegister(request, env) {
     new Date().toISOString(),
   ).run();
 
-  return sendViewerLogin(env, username, { ok: true, user: { username, displayName } }, 201);
+  return { user: { username, displayName }, status: 201 };
+}
+
+async function handleRegister() {
+  return json({ error: "Tài khoản xem gia phả do admin tạo." }, 403);
+}
+
+async function handleAdminUsersList(request, env) {
+  if (!await isAdmin(request, env)) return json({ error: "Bạn cần đăng nhập admin." }, 401);
+  const result = await env.DB.prepare(
+    "SELECT username, display_name, created_at FROM users ORDER BY created_at DESC",
+  ).all();
+  return json({
+    users: (result.results || []).map((user) => ({
+      username: user.username,
+      displayName: user.display_name,
+      createdAt: user.created_at,
+    })),
+  });
+}
+
+async function handleAdminUsersCreate(request, env) {
+  if (!await isAdmin(request, env)) return json({ error: "Bạn cần đăng nhập admin." }, 401);
+  const result = await createViewerUser(env, await bodyJson(request));
+  if (result.error) return json({ error: result.error }, result.status);
+  return json({ ok: true, user: result.user }, result.status);
+}
+
+async function handleAdminUsersDelete(request, env, username) {
+  if (!await isAdmin(request, env)) return json({ error: "Bạn cần đăng nhập admin." }, 401);
+  const cleanUsername = normalizeUsername(username);
+  if (!cleanUsername) return json({ error: "Thiếu tài khoản cần xóa." }, 400);
+  await env.DB.prepare("DELETE FROM users WHERE username = ?").bind(cleanUsername).run();
+  return json({ ok: true });
 }
 
 async function handleViewerLogin(request, env) {
@@ -296,7 +328,7 @@ async function handleViewerSession(request, env) {
   return json({
     authenticated: !!user,
     user: user ? { username: user.username, displayName: user.display_name } : null,
-    registrationEnabled: true,
+    registrationEnabled: false,
   });
 }
 
@@ -379,11 +411,14 @@ export async function onRequest(context) {
     const { request, env } = context;
     const url = new URL(request.url);
     const method = request.method.toUpperCase();
-    const path = url.pathname.replace(/^\/api\/?/, "");
+    const path = url.pathname.replace(/^\/+/, "").replace(/^api\/?/, "").replace(/\/+$/, "");
     const parts = path.split("/").filter(Boolean);
 
     if (method === "GET" && path === "viewer-session") return handleViewerSession(request, env);
     if (method === "GET" && path === "me") return handleMe(request, env);
+    if (method === "GET" && path === "admin/users") return handleAdminUsersList(request, env);
+    if (method === "POST" && path === "admin/users") return handleAdminUsersCreate(request, env);
+    if (method === "DELETE" && parts[0] === "admin" && parts[1] === "users" && parts[2]) return handleAdminUsersDelete(request, env, decodeURIComponent(parts[2]));
     if (method === "POST" && path === "login") return handleAdminLogin(request, env);
     if (method === "POST" && path === "logout") {
       return new Response(null, { status: 204, headers: { "Set-Cookie": clearCookie(ADMIN_COOKIE) } });
