@@ -130,7 +130,7 @@ async function bodyJson(request) {
 }
 
 async function getUser(env, username) {
-  return env.DB.prepare("SELECT id, username, display_name, password_hash, salt, iterations FROM users WHERE username = ?")
+  return env.DB.prepare("SELECT id, username, display_name, COALESCE(role, 'viewer') AS role, password_hash, salt, iterations FROM users WHERE username = ?")
     .bind(username)
     .first();
 }
@@ -214,13 +214,29 @@ function normalizeRelationships(data) {
 }
 
 async function isAdmin(request, env) {
-  const username = await readSignedCookie(request, env, ADMIN_COOKIE, "admin");
-  return username === (env.FAMILY_ADMIN_USER || "admin");
+  return !!await adminSession(request, env);
+}
+
+async function adminSession(request, env) {
+  const username = normalizeUsername(await readSignedCookie(request, env, ADMIN_COOKIE, "admin"));
+  if (!username) return null;
+  const rootUsername = normalizeUsername(env.FAMILY_ADMIN_USER || "admin");
+  if (username === rootUsername) {
+    return { username: rootUsername, displayName: "Admin gốc", role: "admin", isRoot: true };
+  }
+  const user = await getUser(env, username);
+  if (!user || user.role !== "admin") return null;
+  return {
+    username: user.username,
+    displayName: user.display_name,
+    role: "admin",
+    isRoot: false,
+  };
 }
 
 async function viewerUser(request, env) {
-  const admin = await isAdmin(request, env);
-  if (admin) return { username: env.FAMILY_ADMIN_USER || "admin", display_name: "Admin" };
+  const admin = await adminSession(request, env);
+  if (admin) return { username: admin.username, display_name: admin.displayName, role: "admin" };
   const username = await readSignedCookie(request, env, VIEWER_COOKIE, "viewer");
   if (!username) return null;
   return getUser(env, normalizeUsername(username));
@@ -228,44 +244,57 @@ async function viewerUser(request, env) {
 
 async function handleAdminLogin(request, env) {
   const payload = await bodyJson(request);
-  const username = clean(payload.username);
+  const username = normalizeUsername(payload.username);
   const password = clean(payload.password);
-  const adminUser = env.FAMILY_ADMIN_USER || "admin";
+  const adminUser = normalizeUsername(env.FAMILY_ADMIN_USER || "admin");
   const adminPassword = env.FAMILY_ADMIN_PASSWORD || "";
-  if (username !== adminUser || password !== adminPassword) {
-    return json({ error: "Sai tài khoản hoặc mật khẩu." }, 401);
+  let displayName = "Admin gốc";
+  if (username === adminUser) {
+    if (!adminPassword || password !== adminPassword) {
+      return json({ error: "Sai tài khoản hoặc mật khẩu." }, 401);
+    }
+  } else {
+    const user = await getUser(env, username);
+    if (!user || user.role !== "admin") return json({ error: "Sai tài khoản hoặc mật khẩu." }, 401);
+    const expected = await passwordHash(password, fromBase64Url(user.salt), user.iterations || PASSWORD_ITERATIONS);
+    if (expected !== user.password_hash) return json({ error: "Sai tài khoản hoặc mật khẩu." }, 401);
+    displayName = user.display_name;
   }
   const token = await signPayload(env, {
     scope: "admin",
-    user: adminUser,
+    user: username,
     exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7,
   });
-  return json({ ok: true }, 200, { "Set-Cookie": makeCookie(ADMIN_COOKIE, token, 604800) });
+  return json({ ok: true, user: { username, displayName, role: "admin" } }, 200, { "Set-Cookie": makeCookie(ADMIN_COOKIE, token, 604800) });
 }
 
-async function createViewerUser(env, payload) {
+async function createUserAccount(env, payload) {
   const username = normalizeUsername(payload.username);
   const password = clean(payload.password);
   const displayName = clean(payload.displayName).slice(0, 80) || username;
+  const role = clean(payload.role) === "admin" ? "admin" : "viewer";
+  const rootUsername = normalizeUsername(env.FAMILY_ADMIN_USER || "admin");
   if (username.length < 3) return { error: "Tài khoản cần từ 3 ký tự trở lên.", status: 400 };
   if (password.length < 6) return { error: "Mật khẩu cần từ 6 ký tự trở lên.", status: 400 };
+  if (username === rootUsername) return { error: "Không thể tạo trùng tài khoản admin gốc.", status: 409 };
   if (await getUser(env, username)) return { error: "Tài khoản này đã tồn tại.", status: 409 };
 
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const hash = await passwordHash(password, salt, PASSWORD_ITERATIONS);
   await env.DB.prepare(
-    "INSERT INTO users (id, username, display_name, password_hash, salt, iterations, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO users (id, username, display_name, role, password_hash, salt, iterations, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
   ).bind(
     randomId("u"),
     username,
     displayName,
+    role,
     hash,
     base64Url(salt),
     PASSWORD_ITERATIONS,
     new Date().toISOString(),
   ).run();
 
-  return { user: { username, displayName }, status: 201 };
+  return { user: { username, displayName, role }, status: 201 };
 }
 
 async function handleRegister() {
@@ -273,30 +302,84 @@ async function handleRegister() {
 }
 
 async function handleAdminUsersList(request, env) {
-  if (!await isAdmin(request, env)) return json({ error: "Bạn cần đăng nhập admin." }, 401);
+  const admin = await adminSession(request, env);
+  if (!admin) return json({ error: "Bạn cần đăng nhập admin." }, 401);
+  const rootUsername = normalizeUsername(env.FAMILY_ADMIN_USER || "admin");
   const result = await env.DB.prepare(
-    "SELECT username, display_name, created_at FROM users ORDER BY created_at DESC",
+    "SELECT username, display_name, COALESCE(role, 'viewer') AS role, created_at FROM users ORDER BY created_at DESC",
   ).all();
   return json({
-    users: (result.results || []).map((user) => ({
-      username: user.username,
-      displayName: user.display_name,
-      createdAt: user.created_at,
-    })),
+    currentUser: { username: admin.username, isRoot: admin.isRoot },
+    users: [
+      {
+        username: rootUsername,
+        displayName: "Admin gốc",
+        role: "admin",
+        locked: true,
+        isRoot: true,
+        createdAt: "",
+      },
+      ...(result.results || []).map((user) => ({
+        username: user.username,
+        displayName: user.display_name,
+        role: user.role || "viewer",
+        locked: false,
+        isRoot: false,
+        createdAt: user.created_at,
+      })),
+    ],
   });
 }
 
 async function handleAdminUsersCreate(request, env) {
   if (!await isAdmin(request, env)) return json({ error: "Bạn cần đăng nhập admin." }, 401);
-  const result = await createViewerUser(env, await bodyJson(request));
+  const result = await createUserAccount(env, await bodyJson(request));
   if (result.error) return json({ error: result.error }, result.status);
   return json({ ok: true, user: result.user }, result.status);
 }
 
-async function handleAdminUsersDelete(request, env, username) {
-  if (!await isAdmin(request, env)) return json({ error: "Bạn cần đăng nhập admin." }, 401);
+async function handleAdminUsersUpdate(request, env, username) {
+  const admin = await adminSession(request, env);
+  if (!admin) return json({ error: "Bạn cần đăng nhập admin." }, 401);
   const cleanUsername = normalizeUsername(username);
+  const rootUsername = normalizeUsername(env.FAMILY_ADMIN_USER || "admin");
+  if (!cleanUsername) return json({ error: "Thiếu tài khoản cần sửa." }, 400);
+  if (cleanUsername === rootUsername) return json({ error: "Không thể sửa tài khoản admin gốc." }, 403);
+
+  const user = await getUser(env, cleanUsername);
+  if (!user) return json({ error: "Không tìm thấy tài khoản." }, 404);
+  const payload = await bodyJson(request);
+  const displayName = clean(payload.displayName).slice(0, 80) || cleanUsername;
+  const role = clean(payload.role) === "admin" ? "admin" : "viewer";
+  if (admin.username === cleanUsername && user.role === "admin" && role !== "admin") {
+    return json({ error: "Không thể tự hạ quyền tài khoản đang đăng nhập." }, 400);
+  }
+
+  const password = clean(payload.password);
+  if (password) {
+    if (password.length < 6) return json({ error: "Mật khẩu cần từ 6 ký tự trở lên." }, 400);
+    const salt = crypto.getRandomValues(new Uint8Array(16));
+    const hash = await passwordHash(password, salt, PASSWORD_ITERATIONS);
+    await env.DB.prepare(
+      "UPDATE users SET display_name = ?, role = ?, password_hash = ?, salt = ?, iterations = ? WHERE username = ?",
+    ).bind(displayName, role, hash, base64Url(salt), PASSWORD_ITERATIONS, cleanUsername).run();
+  } else {
+    await env.DB.prepare(
+      "UPDATE users SET display_name = ?, role = ? WHERE username = ?",
+    ).bind(displayName, role, cleanUsername).run();
+  }
+
+  return json({ ok: true, user: { username: cleanUsername, displayName, role } });
+}
+
+async function handleAdminUsersDelete(request, env, username) {
+  const admin = await adminSession(request, env);
+  if (!admin) return json({ error: "Bạn cần đăng nhập admin." }, 401);
+  const cleanUsername = normalizeUsername(username);
+  const rootUsername = normalizeUsername(env.FAMILY_ADMIN_USER || "admin");
   if (!cleanUsername) return json({ error: "Thiếu tài khoản cần xóa." }, 400);
+  if (cleanUsername === rootUsername) return json({ error: "Không thể xóa tài khoản admin gốc." }, 403);
+  if (cleanUsername === admin.username) return json({ error: "Không thể xóa tài khoản đang đăng nhập." }, 400);
   await env.DB.prepare("DELETE FROM users WHERE username = ?").bind(cleanUsername).run();
   return json({ ok: true });
 }
@@ -441,6 +524,7 @@ export async function onRequest(context) {
     if (method === "GET" && path === "me") return handleMe(request, env);
     if (method === "GET" && path === "admin/users") return handleAdminUsersList(request, env);
     if (method === "POST" && path === "admin/users") return handleAdminUsersCreate(request, env);
+    if (method === "PUT" && parts[0] === "admin" && parts[1] === "users" && parts[2]) return handleAdminUsersUpdate(request, env, decodeURIComponent(parts[2]));
     if (method === "DELETE" && parts[0] === "admin" && parts[1] === "users" && parts[2]) return handleAdminUsersDelete(request, env, decodeURIComponent(parts[2]));
     if (method === "POST" && path === "login") return handleAdminLogin(request, env);
     if (method === "POST" && path === "logout") {

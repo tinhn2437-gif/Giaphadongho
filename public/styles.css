@@ -875,7 +875,8 @@ tr:hover td {
   gap: 8px;
 }
 
-.viewer-account-form input {
+.viewer-account-form input,
+.viewer-account-form select {
   width: 100%;
   min-height: 36px;
   padding: 8px 9px;
@@ -895,12 +896,40 @@ tr:hover td {
 }
 
 .viewer-account-row {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  padding: 9px 0;
+  border-top: 1px solid rgba(198, 146, 57, 0.38);
+}
+
+.viewer-account-row input,
+.viewer-account-row select {
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fffdf2;
+  font-size: 13px;
+}
+
+.account-main {
+  display: grid;
+  gap: 2px;
+}
+
+.account-actions {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 8px;
-  padding: 7px 0;
-  border-top: 1px solid rgba(198, 146, 57, 0.38);
+}
+
+.account-lock {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .viewer-account-row small {

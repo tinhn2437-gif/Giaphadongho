@@ -13,6 +13,7 @@ const state = {
   viewerAuthenticated: false,
   viewerUser: null,
   viewerAccounts: [],
+  currentAdmin: null,
   menuOpen: false,
   editingId: "",
   adminQuery: "",
@@ -104,8 +105,10 @@ async function loadViewerAccounts() {
   try {
     const result = await api("/api/admin/users");
     state.viewerAccounts = result.users || [];
+    state.currentAdmin = result.currentUser || null;
   } catch (error) {
     state.viewerAccounts = [];
+    state.currentAdmin = null;
   }
 }
 
@@ -1303,20 +1306,38 @@ function renderAdminPanel() {
               `).join("")}
             </div>
             <div class="viewer-account-box">
-              <h3>Tài khoản xem</h3>
+              <h3>Tài khoản truy cập</h3>
               <form id="viewerAccountForm" class="viewer-account-form">
                 <input name="displayName" placeholder="Tên hiển thị">
                 <input name="username" placeholder="Tài khoản" autocomplete="off" required>
                 <input name="password" type="password" placeholder="Mật khẩu" autocomplete="new-password" required>
+                <select name="role" aria-label="Loại tài khoản">
+                  <option value="viewer">Người xem</option>
+                  <option value="admin">Admin phụ</option>
+                </select>
                 <button class="btn" type="submit">Tạo tài khoản</button>
               </form>
               <div class="viewer-account-list">
                 ${state.viewerAccounts.length ? state.viewerAccounts.map((user) => `
-                  <div class="viewer-account-row">
-                    <span><strong>${esc(user.displayName || user.username)}</strong><br><small>${esc(user.username)}</small></span>
-                    <button class="text-btn delete-viewer-user" data-username="${esc(user.username)}" type="button">Xóa</button>
-                  </div>
-                `).join("") : `<p class="notice">Chưa có tài khoản xem nào.</p>`}
+                  <form class="viewer-account-row account-edit-form" data-username="${esc(user.username)}">
+                    <span class="account-main">
+                      <strong>${esc(user.displayName || user.username)}</strong>
+                      <small>${esc(user.username)} · ${user.role === "admin" ? "Admin" : "Người xem"}${user.locked ? " · khóa gốc" : ""}</small>
+                    </span>
+                    <input name="displayName" value="${esc(user.displayName || "")}" ${user.locked ? "disabled" : ""} placeholder="Tên hiển thị">
+                    <select name="role" ${user.locked ? "disabled" : ""} aria-label="Loại tài khoản">
+                      <option value="viewer" ${user.role === "viewer" ? "selected" : ""}>Người xem</option>
+                      <option value="admin" ${user.role === "admin" ? "selected" : ""}>Admin phụ</option>
+                    </select>
+                    <input name="password" type="password" ${user.locked ? "disabled" : ""} placeholder="Mật khẩu mới">
+                    <div class="account-actions">
+                      ${user.locked ? `<span class="account-lock">Không thể sửa/xóa</span>` : `
+                        <button class="text-btn update-account" type="submit">Lưu</button>
+                        <button class="text-btn delete-viewer-user" data-username="${esc(user.username)}" type="button">Xóa</button>
+                      `}
+                    </div>
+                  </form>
+                `).join("") : `<p class="notice">Chưa có tài khoản nào.</p>`}
               </div>
             </div>
           </aside>
@@ -1422,6 +1443,9 @@ function bindAdmin() {
   });
   $("#personForm").addEventListener("submit", savePerson);
   $("#viewerAccountForm")?.addEventListener("submit", createViewerAccount);
+  $$(".account-edit-form").forEach((form) => {
+    form.addEventListener("submit", updateAccessAccount);
+  });
   $$(".delete-viewer-user").forEach((button) => {
     button.addEventListener("click", () => deleteViewerAccount(button.dataset.username));
   });
@@ -1445,12 +1469,35 @@ async function createViewerAccount(event) {
         displayName: formData.get("displayName"),
         username: formData.get("username"),
         password: formData.get("password"),
+        role: formData.get("role"),
       }),
     });
     form.reset();
     await loadViewerAccounts();
     renderAdminPanel();
-    toast("Đã tạo tài khoản xem.");
+    toast("Đã tạo tài khoản.");
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function updateAccessAccount(event) {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const username = form.dataset.username;
+  const formData = new FormData(form);
+  try {
+    await api(`/api/admin/users/${encodeURIComponent(username)}`, {
+      method: "PUT",
+      body: JSON.stringify({
+        displayName: formData.get("displayName"),
+        role: formData.get("role"),
+        password: formData.get("password"),
+      }),
+    });
+    await loadViewerAccounts();
+    renderAdminPanel();
+    toast("Đã cập nhật tài khoản.");
   } catch (error) {
     toast(error.message);
   }
@@ -1462,7 +1509,7 @@ async function deleteViewerAccount(username) {
     await api(`/api/admin/users/${encodeURIComponent(username)}`, { method: "DELETE" });
     await loadViewerAccounts();
     renderAdminPanel();
-    toast("Đã xóa tài khoản xem.");
+    toast("Đã xóa tài khoản.");
   } catch (error) {
     toast(error.message);
   }
