@@ -1239,7 +1239,6 @@ async function renderAdmin() {
         <main class="login-screen">
           <form class="login-panel" id="loginForm">
             <h2>Đăng nhập admin</h2>
-            <p class="notice">Tài khoản mặc định là admin / admin123. Khi đưa lên mạng thật, nên đổi bằng biến môi trường.</p>
             <div class="field"><label>Tài khoản</label><input name="username" autocomplete="username" required></div>
             <div class="field"><label>Mật khẩu</label><input name="password" type="password" autocomplete="current-password" required></div>
             <div class="form-actions"><button class="btn" type="submit">Đăng nhập</button></div>

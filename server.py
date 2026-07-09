@@ -24,7 +24,7 @@ DATA_FILE = DATA_DIR / "family.json"
 USERS_FILE = DATA_DIR / "users.json"
 
 ADMIN_USER = os.environ.get("FAMILY_ADMIN_USER", "admin")
-ADMIN_PASSWORD = os.environ.get("FAMILY_ADMIN_PASSWORD", "admin123")
+ADMIN_PASSWORD = os.environ.get("FAMILY_ADMIN_PASSWORD", "")
 SECRET = os.environ.get("FAMILY_SECRET", "doi-mat-khau-bi-mat-" + str(BASE_DIR)).encode("utf-8")
 COOKIE_NAME = "family_admin"
 VIEWER_COOKIE_NAME = "family_viewer"
@@ -810,7 +810,7 @@ def main():
     server = ThreadingHTTPServer(("127.0.0.1", port), FamilyHandler)
     print(f"Gia phả đang chạy tại http://127.0.0.1:{port}")
     print(f"Trang admin: http://127.0.0.1:{port}/admin")
-    print("Tài khoản mặc định: admin / admin123")
+    print("Admin cần đặt FAMILY_ADMIN_PASSWORD trước khi đăng nhập.")
     server.serve_forever()
 
 

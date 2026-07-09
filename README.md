@@ -12,14 +12,7 @@ cd "D:\KHOA HỌC KĨ THUẬT\web-gia-pha"
 python server.py
 ```
 
-Tai khoan mac dinh:
-
-- Tai khoan: `admin`
-- Mat khau: `admin123`
-
-Trang xem co dang ky/dang nhap rieng cho nguoi xem. Tai khoan nguoi xem duoc luu trong `data/users.json` va file nay khong dua len Git.
-
-Khi dua len may chu that, hay doi bang bien moi truong:
+Trang admin can tai khoan va mat khau rieng. Hay dat bang bien moi truong truoc khi chay server:
 
 ```powershell
 $env:FAMILY_ADMIN_USER="ten_admin"

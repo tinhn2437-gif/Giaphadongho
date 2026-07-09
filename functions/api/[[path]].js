@@ -226,7 +226,7 @@ async function handleAdminLogin(request, env) {
   const username = clean(payload.username);
   const password = clean(payload.password);
   const adminUser = env.FAMILY_ADMIN_USER || "admin";
-  const adminPassword = env.FAMILY_ADMIN_PASSWORD || "admin123";
+  const adminPassword = env.FAMILY_ADMIN_PASSWORD || "";
   if (username !== adminUser || password !== adminPassword) {
     return json({ error: "Sai tài khoản hoặc mật khẩu." }, 401);
   }
