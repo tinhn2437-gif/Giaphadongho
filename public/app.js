@@ -727,16 +727,169 @@ function buildLayout() {
     });
   };
   const firstGen = Math.min(...Array.from(groupsByGen.keys()));
-  const rootGroups = groupsByGen.get(firstGen) || [];
-  rootGroups.forEach((group) => {
+  const groupById = new Map();
+  groupsByGen.forEach((groups) => {
+    groups.forEach((group) => {
+      group.forEach((id) => groupById.set(id, group));
+    });
+  });
+  const shiftIds = (ids, deltaX) => {
+    ids.forEach((id) => {
+      const position = positions.get(id);
+      if (position) position.x += deltaX;
+    });
+  };
+  const groupsBounds = (groups) => {
+    const bounds = groups.map(groupBounds).filter(Boolean);
+    if (!bounds.length) return null;
+    return {
+      minX: Math.min(...bounds.map((item) => item.minX)),
+      maxX: Math.max(...bounds.map((item) => item.maxX)),
+    };
+  };
+  const childGroupBoundsForGroup = (group, childGen) => {
     const groupIdSet = new Set(group);
     const childIds = new Set(people
       .filter((person) => groupIdSet.has(person.fatherId) || groupIdSet.has(person.motherId))
       .map((person) => person.id));
-    const childGroupBounds = (groupsByGen.get(firstGen + 1) || [])
+    return (groupsByGen.get(childGen) || [])
       .filter((childGroup) => childGroup.some((id) => childIds.has(id)))
       .map(groupBounds)
       .filter(Boolean);
+  };
+  const branchIdsForGroup = (group) => {
+    const result = new Set(group);
+    const queue = [...group];
+    while (queue.length) {
+      const id = queue.shift();
+      const person = byId.get(id);
+      (person?.spouseIds || []).forEach((spouseId) => {
+        const spouse = byId.get(spouseId);
+        if (!spouse || result.has(spouseId)) return;
+        if ((generation.get(spouseId) ?? 0) < (generation.get(id) ?? 0)) return;
+        result.add(spouseId);
+        queue.push(spouseId);
+      });
+      (children.get(id) || []).forEach((childId) => {
+        const childGroup = groupById.get(childId) || [childId];
+        childGroup.forEach((memberId) => {
+          if (result.has(memberId)) return;
+          result.add(memberId);
+          queue.push(memberId);
+        });
+      });
+    }
+    return result;
+  };
+  const relationChildGroups = (key, childGen) => {
+    const found = new Set();
+    people.forEach((person) => {
+      if (generation.get(person.id) !== childGen || parentKeyOf(person) !== key) return;
+      const group = groupById.get(person.id);
+      if (group) found.add(group);
+    });
+    return Array.from(found).sort((a, b) => groupBirthOrder(a) - groupBirthOrder(b));
+  };
+  const relationKeysForGeneration = (gen, childGen) => {
+    const keys = new Set();
+    people.forEach((person) => {
+      if (generation.get(person.id) !== childGen || parentGenerationOf(person) !== gen) return;
+      const key = parentKeyOf(person);
+      if (key) keys.add(key);
+    });
+    return Array.from(keys).sort((a, b) => (parentCenterForKey(a) ?? 0) - (parentCenterForKey(b) ?? 0));
+  };
+  const alignLowerBranchesToParents = () => {
+    const orderedGens = Array.from(groupsByGen.keys()).sort((a, b) => a - b);
+    orderedGens.forEach((gen) => {
+      if (gen === firstGen) return;
+      const childGen = orderedGens.find((item) => item > gen && (groupsByGen.get(item) || []).length);
+      if (childGen === undefined) return;
+      relationKeysForGeneration(gen, childGen).forEach((key) => {
+        const target = parentCenterForKey(key);
+        if (target === null) return;
+        const childGroups = relationChildGroups(key, childGen);
+        const bounds = groupsBounds(childGroups);
+        if (!bounds) return;
+        const childCenter = (bounds.minX + bounds.maxX) / 2;
+        const branchIds = new Set();
+        childGroups.forEach((group) => {
+          branchIdsForGroup(group).forEach((id) => branchIds.add(id));
+        });
+        shiftIds(branchIds, target - childCenter);
+      });
+    });
+  };
+  const packBranchRows = () => {
+    const BRANCH_PACK_GAP = Math.max(10, Math.round(GROUP_GAP * 0.2));
+    Array.from(groupsByGen.keys()).sort((a, b) => a - b).forEach((gen) => {
+      if (gen === firstGen) return;
+      const items = (groupsByGen.get(gen) || [])
+        .map((group) => {
+          const bounds = groupBounds(group);
+          if (!bounds) return null;
+          return { group, bounds, x: bounds.minX, width: bounds.maxX - bounds.minX, idealX: bounds.minX };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.idealX - b.idealX);
+      const components = [];
+      items.forEach((item) => {
+        const last = components[components.length - 1];
+        if (!last) {
+          components.push([item]);
+          return;
+        }
+        const lastMax = Math.max(...last.map((entry) => entry.idealX + entry.width));
+        if (item.idealX < lastMax + BRANCH_PACK_GAP) last.push(item);
+        else components.push([item]);
+      });
+      const placeComponent = (component) => {
+        const idealMin = Math.min(...component.map((item) => item.idealX));
+        const idealMax = Math.max(...component.map((item) => item.idealX + item.width));
+        const packedWidth = component.reduce((sum, item) => sum + item.width, 0) + BRANCH_PACK_GAP * Math.max(0, component.length - 1);
+        let x = (idealMin + idealMax) / 2 - packedWidth / 2;
+        component.sort((a, b) => a.idealX - b.idealX).forEach((item) => {
+          item.x = x;
+          x += item.width + BRANCH_PACK_GAP;
+        });
+      };
+      let merged = true;
+      while (merged) {
+        merged = false;
+        components.forEach(placeComponent);
+        for (let index = 1; index < components.length; index++) {
+          const previous = components[index - 1];
+          const current = components[index];
+          const previousMax = Math.max(...previous.map((item) => item.x + item.width));
+          const currentMin = Math.min(...current.map((item) => item.x));
+          if (currentMin < previousMax + BRANCH_PACK_GAP) {
+            previous.push(...current);
+            components.splice(index, 1);
+            merged = true;
+            break;
+          }
+        }
+      }
+      components.forEach(placeComponent);
+      const minPackedX = Math.min(...items.map((item) => item.x), PADDING);
+      if (minPackedX < PADDING) {
+        const delta = PADDING - minPackedX;
+        items.forEach((item) => { item.x += delta; });
+      }
+      items.forEach((item) => {
+        const delta = item.x - item.bounds.minX;
+        if (Math.abs(delta) < 1) return;
+        shiftIds(branchIdsForGroup(item.group), delta);
+      });
+    });
+  };
+  for (let pass = 0; pass < 6; pass++) {
+    alignLowerBranchesToParents();
+    packBranchRows();
+  }
+  const rootGroups = groupsByGen.get(firstGen) || [];
+  rootGroups.forEach((group) => {
+    const childGroupBounds = childGroupBoundsForGroup(group, firstGen + 1);
     if (!childGroupBounds.length) return;
     const bounds = groupBounds(group);
     if (!bounds) return;
