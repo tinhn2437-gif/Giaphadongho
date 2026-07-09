@@ -44,6 +44,11 @@ function fromBase64Url(value) {
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
 }
 
+function bytesFromBase64(value) {
+  const binary = atob(value);
+  return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
 function randomId(prefix) {
   const bytes = new Uint8Array(8);
   crypto.getRandomValues(bytes);
@@ -397,13 +402,31 @@ async function handlePhoto(request, env) {
   if (!await isAdmin(request, env)) return json({ error: "Bạn cần đăng nhập admin." }, 401);
   const payload = await bodyJson(request);
   const dataUrl = clean(payload.dataUrl);
-  if (!dataUrl.startsWith("data:image/") || !dataUrl.includes(",")) {
+  const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,([a-zA-Z0-9+/=]+)$/);
+  if (!match) {
     return json({ error: "Ảnh không hợp lệ." }, 400);
   }
   if (dataUrl.length > 1600000) {
     return json({ error: "Ảnh quá lớn. Hãy chọn ảnh nhỏ hơn hoặc giảm dung lượng ảnh trước khi tải lên." }, 400);
   }
-  return json({ url: dataUrl });
+  const id = randomId("photo");
+  await env.DB.prepare(
+    "INSERT INTO photos (id, content_type, data, created_at) VALUES (?, ?, ?, ?)",
+  ).bind(id, match[1], match[2], new Date().toISOString()).run();
+  return json({ url: `/api/photos/${id}` });
+}
+
+async function handlePhotoGet(request, env, id) {
+  const user = await viewerUser(request, env);
+  if (!user) return json({ error: "Bạn cần đăng nhập để xem ảnh." }, 401);
+  const row = await env.DB.prepare("SELECT content_type, data FROM photos WHERE id = ?").bind(clean(id)).first();
+  if (!row) return json({ error: "Không tìm thấy ảnh." }, 404);
+  return new Response(bytesFromBase64(row.data), {
+    headers: {
+      "Content-Type": row.content_type,
+      "Cache-Control": "private, max-age=86400",
+    },
+  });
 }
 
 export async function onRequest(context) {
@@ -434,6 +457,7 @@ export async function onRequest(context) {
     if (method === "DELETE" && parts[0] === "people" && parts[1]) return handlePeopleDelete(request, env, decodeURIComponent(parts[1]));
     if (method === "POST" && path === "import") return handleImport(request, env);
     if (method === "POST" && path === "photos") return handlePhoto(request, env);
+    if (method === "GET" && parts[0] === "photos" && parts[1]) return handlePhotoGet(request, env, decodeURIComponent(parts[1]));
 
     return json({ error: "Không tìm thấy." }, 404);
   } catch (error) {

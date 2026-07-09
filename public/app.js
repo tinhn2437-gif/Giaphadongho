@@ -1514,9 +1514,12 @@ async function savePerson(event) {
   try {
     if (file && file.size) {
       photo = await uploadPhoto(file);
+    } else {
+      photo = await ensureStoredPhoto(photo);
     }
     const uploadedGallery = galleryFiles.length ? await Promise.all(galleryFiles.map(uploadPhoto)) : [];
     const existingGallery = String(formData.get("galleryPhotos") || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
+    const storedExistingGallery = existingGallery.length ? await Promise.all(existingGallery.map(ensureStoredPhoto)) : [];
     const payload = {
       fullName: formData.get("fullName"),
       gender: formData.get("gender"),
@@ -1539,7 +1542,7 @@ async function savePerson(event) {
         ? [formData.get("husbandId")].filter(Boolean)
         : (formData.get("familyRole") === "Con gái" ? [] : [formData.get("spouseId")].filter(Boolean)),
       photo,
-      galleryPhotos: [...existingGallery, ...uploadedGallery],
+      galleryPhotos: [...storedExistingGallery, ...uploadedGallery],
       achievements: String(formData.get("achievements") || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
       notes: formData.get("notes"),
     };
@@ -1577,8 +1580,7 @@ function loadImage(dataUrl) {
   });
 }
 
-async function compressPhoto(file) {
-  const originalDataUrl = await readFileAsDataUrl(file);
+async function compressDataUrl(originalDataUrl) {
   const image = await loadImage(originalDataUrl);
   const maxSide = 1200;
   const scale = Math.min(1, maxSide / Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height));
@@ -1605,14 +1607,28 @@ async function compressPhoto(file) {
   return dataUrl;
 }
 
+async function compressPhoto(file) {
+  return compressDataUrl(await readFileAsDataUrl(file));
+}
+
+async function uploadDataUrl(dataUrl, filename = "photo.jpg") {
+  const result = await api("/api/photos", {
+    method: "POST",
+    body: JSON.stringify({ filename, dataUrl }),
+  });
+  return result.url;
+}
+
 async function uploadPhoto(file) {
   if (!file.type.startsWith("image/")) throw new Error("Chỉ hỗ trợ file ảnh.");
   const dataUrl = await compressPhoto(file);
-  const result = await api("/api/photos", {
-    method: "POST",
-    body: JSON.stringify({ filename: file.name, dataUrl }),
-  });
-  return result.url;
+  return uploadDataUrl(dataUrl, file.name);
+}
+
+async function ensureStoredPhoto(value) {
+  const url = String(value || "").trim();
+  if (!url || !url.startsWith("data:image/")) return url;
+  return uploadDataUrl(await compressDataUrl(url));
 }
 
 async function deletePerson() {

@@ -13,3 +13,10 @@ CREATE TABLE IF NOT EXISTS family_data (
   json TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS photos (
+  id TEXT PRIMARY KEY,
+  content_type TEXT NOT NULL,
+  data TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
