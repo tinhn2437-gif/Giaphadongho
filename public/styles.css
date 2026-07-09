@@ -449,6 +449,8 @@ a {
   fill: none;
   stroke: #6d8179;
   stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
 }
 
 .spouse-line {

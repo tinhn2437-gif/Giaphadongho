@@ -396,7 +396,7 @@ function buildLayout() {
   const CARD_H = 128;
   const SPOUSE_GAP = 16;
   const GROUP_GAP = 62;
-  const ROW_GAP = 164;
+  const ROW_GAP = 188;
   const PADDING = 80;
   const positions = new Map();
   const groupsByGen = new Map();
@@ -700,12 +700,63 @@ function personMatches(person) {
   return haystack.includes(normalizeText(state.query));
 }
 
+function rangesOverlap(a, b, gap = 10) {
+  return a.start <= b.end + gap && b.start <= a.end + gap;
+}
+
+function routeTreeEdgeGroups(groups) {
+  const byBand = new Map();
+  groups.forEach((group) => {
+    const key = `${Math.round(group.parentY)}|${Math.round(group.childY)}`;
+    if (!byBand.has(key)) byBand.set(key, []);
+    byBand.get(key).push(group);
+  });
+
+  byBand.forEach((bandGroups) => {
+    const lanes = [];
+    bandGroups
+      .sort((a, b) => {
+        if (a.parentX !== b.parentX) return a.parentX - b.parentX;
+        return a.relationKey.localeCompare(b.relationKey);
+      })
+      .forEach((group) => {
+        const span = {
+          start: Math.min(group.parentX, ...group.childXs),
+          end: Math.max(group.parentX, ...group.childXs),
+        };
+        let laneIndex = lanes.findIndex((lane) => lane.spans.every((item) => !rangesOverlap(span, item, 24)));
+        if (laneIndex === -1) {
+          laneIndex = lanes.length;
+          lanes.push({ spans: [] });
+        }
+        lanes[laneIndex].spans.push(span);
+        group.laneIndex = laneIndex;
+      });
+
+    const parentY = Math.min(...bandGroups.map((group) => group.parentY));
+    const childY = Math.max(...bandGroups.map((group) => group.childY));
+    const top = parentY + 26;
+    const bottom = childY - 36;
+    const hasSpace = bottom > top;
+    lanes.forEach((lane, index) => {
+      lane.y = hasSpace
+        ? top + ((index + 1) * (bottom - top)) / (lanes.length + 1)
+        : parentY + (childY - parentY) / 2;
+    });
+    bandGroups.forEach((group) => {
+      group.midY = lanes[group.laneIndex].y;
+    });
+  });
+
+  return groups;
+}
+
 function renderTree() {
   if (!state.data.people.length) return `<section class="empty-state list-panel">Chưa có dữ liệu gia phả.</section>`;
   const layout = buildLayout();
   const queryActive = state.query.trim();
   const spouseLines = [];
-  const edges = [];
+  const edgeGroups = new Map();
 
   state.data.people.forEach((person) => {
     const pos = layout.positions.get(person.id);
@@ -725,8 +776,22 @@ function renderTree() {
     const parentY = Math.max(...parentPositions.map((item) => item.y + item.h));
     const childX = pos.x + pos.w / 2;
     const childY = pos.y;
-    const midY = parentY + (childY - parentY) / 2;
-    edges.push(`<path class="edge" marker-end="url(#arrow)" d="M ${parentX} ${parentY} V ${midY} H ${childX} V ${childY - 8}"></path>`);
+    const relationKey = `${person.fatherId || "_"}|${person.motherId || "_"}`;
+    const groupKey = `${relationKey}|${Math.round(childY)}`;
+    if (!edgeGroups.has(groupKey)) {
+      edgeGroups.set(groupKey, { relationKey, parentX, parentY, childY, childXs: [] });
+    }
+    edgeGroups.get(groupKey).childXs.push(childX);
+  });
+
+  const edges = routeTreeEdgeGroups(Array.from(edgeGroups.values())).flatMap((group) => {
+    const childXs = [...new Set(group.childXs)].sort((a, b) => a - b);
+    const branchStart = Math.min(group.parentX, ...childXs);
+    const branchEnd = Math.max(group.parentX, ...childXs);
+    return [
+      `<path class="edge" d="M ${group.parentX} ${group.parentY} V ${group.midY} M ${branchStart} ${group.midY} H ${branchEnd}"></path>`,
+      ...childXs.map((childX) => `<path class="edge" marker-end="url(#arrow)" d="M ${childX} ${group.midY} V ${group.childY - 8}"></path>`),
+    ];
   });
 
   const cards = state.data.people.map((person) => {
