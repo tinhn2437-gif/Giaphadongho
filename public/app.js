@@ -58,7 +58,10 @@ async function api(path, options = {}) {
   });
   if (response.status === 204) return null;
   const data = await response.json().catch(() => ({}));
-  if (!response.ok) throw new Error(data.error || "Có lỗi xảy ra.");
+  if (!response.ok) {
+    if (response.status === 413) throw new Error("Ảnh quá lớn, hãy chọn ảnh nhỏ hơn hoặc để web tự nén lại rồi thử lần nữa.");
+    throw new Error(data.error || "Có lỗi xảy ra.");
+  }
   return data;
 }
 
@@ -1556,23 +1559,60 @@ async function savePerson(event) {
   }
 }
 
-function uploadPhoto(file) {
+function readFileAsDataUrl(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
-    reader.onload = async () => {
-      try {
-        const result = await api("/api/photos", {
-          method: "POST",
-          body: JSON.stringify({ filename: file.name, dataUrl: reader.result }),
-        });
-        resolve(result.url);
-      } catch (error) {
-        reject(error);
-      }
-    };
+    reader.onload = () => resolve(String(reader.result || ""));
     reader.onerror = () => reject(new Error("Không đọc được file ảnh."));
     reader.readAsDataURL(file);
   });
+}
+
+function loadImage(dataUrl) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = () => reject(new Error("Không xử lý được ảnh này."));
+    image.src = dataUrl;
+  });
+}
+
+async function compressPhoto(file) {
+  const originalDataUrl = await readFileAsDataUrl(file);
+  const image = await loadImage(originalDataUrl);
+  const maxSide = 1200;
+  const scale = Math.min(1, maxSide / Math.max(image.naturalWidth || image.width, image.naturalHeight || image.height));
+  const width = Math.max(1, Math.round((image.naturalWidth || image.width) * scale));
+  const height = Math.max(1, Math.round((image.naturalHeight || image.height) * scale));
+  const canvas = document.createElement("canvas");
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext("2d");
+  context.fillStyle = "#fff";
+  context.fillRect(0, 0, width, height);
+  context.drawImage(image, 0, 0, width, height);
+
+  let quality = 0.82;
+  let dataUrl = canvas.toDataURL("image/jpeg", quality);
+  while (dataUrl.length > 950000 && quality > 0.48) {
+    quality -= 0.08;
+    dataUrl = canvas.toDataURL("image/jpeg", quality);
+  }
+
+  if (dataUrl.length > 1200000) {
+    throw new Error("Ảnh vẫn quá lớn sau khi nén. Hãy chọn ảnh nhỏ hơn hoặc gửi ảnh đã giảm dung lượng.");
+  }
+  return dataUrl;
+}
+
+async function uploadPhoto(file) {
+  if (!file.type.startsWith("image/")) throw new Error("Chỉ hỗ trợ file ảnh.");
+  const dataUrl = await compressPhoto(file);
+  const result = await api("/api/photos", {
+    method: "POST",
+    body: JSON.stringify({ filename: file.name, dataUrl }),
+  });
+  return result.url;
 }
 
 async function deletePerson() {

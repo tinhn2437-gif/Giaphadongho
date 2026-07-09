@@ -400,8 +400,8 @@ async function handlePhoto(request, env) {
   if (!dataUrl.startsWith("data:image/") || !dataUrl.includes(",")) {
     return json({ error: "Ảnh không hợp lệ." }, 400);
   }
-  if (dataUrl.length > 1400000) {
-    return json({ error: "Ảnh quá lớn. Bản miễn phí hiện chỉ nhận ảnh nhỏ hơn khoảng 1MB, hoặc dán link ảnh vào ô ảnh." }, 400);
+  if (dataUrl.length > 1600000) {
+    return json({ error: "Ảnh quá lớn. Hãy chọn ảnh nhỏ hơn hoặc giảm dung lượng ảnh trước khi tải lên." }, 400);
   }
   return json({ url: dataUrl });
 }
