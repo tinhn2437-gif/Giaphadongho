@@ -1227,7 +1227,7 @@ function personForm(person) {
       <div class="field ${isDaughterInLaw ? "role-hidden" : ""}" data-role-group="birth-parent"><label>Mẹ đẻ</label>${selectPerson("motherId", person.motherId, person.id, false)}</div>
       <div class="field full ${isDaughterInLaw ? "" : "role-hidden"}" data-role-group="inlaw"><label>Chồng trong dòng họ</label>${selectPerson("husbandId", husband?.id || "", person.id, false, (item) => item.familyRole !== "Con dâu")}</div>
       <div class="field full ${isDaughterInLaw ? "" : "role-hidden"}" data-role-group="inlaw"><label>Bố mẹ chồng tự hiện theo chồng</label><div class="readonly-box" id="inLawPreview">${renderInLawPreview(husband?.id || "")}</div></div>
-      <div class="field full ${isDaughterInLaw ? "role-hidden" : ""}" data-role-group="spouse"><label>Vợ/chồng cùng hàng</label>${selectPerson("spouseId", spouseId, person.id, false)}</div>
+      <div class="field full ${isDaughterInLaw || isDaughter ? "role-hidden" : ""}" data-role-group="spouse"><label>Vợ/chồng cùng hàng</label>${selectPerson("spouseId", spouseId, person.id, false)}</div>
       <div class="field full"><label>Ảnh cá nhân</label><input name="photoFile" type="file" accept="image/*"><input name="photo" value="${esc(person.photo)}" placeholder="/uploads/photos/... hoặc link ảnh"></div>
       <div class="field full"><label>Ảnh khác, có thể chọn nhiều file</label><input name="galleryFiles" type="file" accept="image/*" multiple><textarea name="galleryPhotos" placeholder="Hoặc dán link ảnh, mỗi dòng một ảnh">${esc(galleryPhotos.join("\n"))}</textarea></div>
       <div class="field full"><label>Thành tích từ cấp huyện trở lên, mỗi dòng một thành tích</label><textarea name="achievements">${esc((person.achievements || []).join("\n"))}</textarea></div>
@@ -1294,7 +1294,8 @@ function updateRoleFields() {
   const isDaughter = form.elements.familyRole?.value === "Con gái";
   $$('[data-role-group="inlaw"]', form).forEach((item) => item.classList.toggle("role-hidden", !isDaughterInLaw));
   $$('[data-role-group="daughter"]', form).forEach((item) => item.classList.toggle("role-hidden", !isDaughter));
-  $$('[data-role-group="birth-parent"], [data-role-group="spouse"]', form).forEach((item) => item.classList.toggle("role-hidden", isDaughterInLaw));
+  $$('[data-role-group="birth-parent"]', form).forEach((item) => item.classList.toggle("role-hidden", isDaughterInLaw));
+  $$('[data-role-group="spouse"]', form).forEach((item) => item.classList.toggle("role-hidden", isDaughterInLaw || isDaughter));
   if (isDaughterInLaw && form.elements.gender) form.elements.gender.value = "Nữ";
   if (isDaughter && form.elements.gender) form.elements.gender.value = "Nữ";
   updateInLawPreview();
@@ -1354,7 +1355,7 @@ async function savePerson(event) {
       motherId: formData.get("familyRole") === "Con dâu" ? "" : formData.get("motherId"),
       spouseIds: formData.get("familyRole") === "Con dâu"
         ? [formData.get("husbandId")].filter(Boolean)
-        : [formData.get("spouseId")].filter(Boolean),
+        : (formData.get("familyRole") === "Con gái" ? [] : [formData.get("spouseId")].filter(Boolean)),
       photo,
       galleryPhotos: [...existingGallery, ...uploadedGallery],
       achievements: String(formData.get("achievements") || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
