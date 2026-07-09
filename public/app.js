@@ -716,6 +716,8 @@ function routeTreeEdgeGroups(groups) {
     const lanes = [];
     bandGroups
       .sort((a, b) => {
+        const sideDiff = (b.side || 0) - (a.side || 0);
+        if (Math.abs(sideDiff) > 8) return sideDiff;
         if (a.parentX !== b.parentX) return a.parentX - b.parentX;
         return a.relationKey.localeCompare(b.relationKey);
       })
@@ -724,12 +726,16 @@ function routeTreeEdgeGroups(groups) {
           start: Math.min(group.parentX, ...group.childXs),
           end: Math.max(group.parentX, ...group.childXs),
         };
-        let laneIndex = lanes.findIndex((lane) => lane.spans.every((item) => !rangesOverlap(span, item, 24)));
+        let laneIndex = lanes.findIndex((lane) => {
+          if (group.fatherId && lane.fatherIds.has(group.fatherId)) return false;
+          return lane.spans.every((item) => !rangesOverlap(span, item, 24));
+        });
         if (laneIndex === -1) {
           laneIndex = lanes.length;
-          lanes.push({ spans: [] });
+          lanes.push({ spans: [], fatherIds: new Set() });
         }
         lanes[laneIndex].spans.push(span);
+        if (group.fatherId) lanes[laneIndex].fatherIds.add(group.fatherId);
         group.laneIndex = laneIndex;
       });
 
@@ -770,16 +776,19 @@ function renderTree() {
       spouseLines.push(`<line class="spouse-line" x1="${left.x + left.w}" y1="${left.y + left.h / 2}" x2="${right.x}" y2="${right.y + right.h / 2}"></line>`);
     });
 
-    const parentPositions = [person.fatherId, person.motherId].map((id) => layout.positions.get(id)).filter(Boolean);
+    const fatherPos = layout.positions.get(person.fatherId);
+    const motherPos = layout.positions.get(person.motherId);
+    const parentPositions = [fatherPos, motherPos].filter(Boolean);
     if (!parentPositions.length) return;
     const parentX = parentPositions.reduce((sum, item) => sum + item.x + item.w / 2, 0) / parentPositions.length;
     const parentY = Math.max(...parentPositions.map((item) => item.y + item.h));
+    const fatherCenter = fatherPos ? fatherPos.x + fatherPos.w / 2 : parentX;
     const childX = pos.x + pos.w / 2;
     const childY = pos.y;
     const relationKey = `${person.fatherId || "_"}|${person.motherId || "_"}`;
     const groupKey = `${relationKey}|${Math.round(childY)}`;
     if (!edgeGroups.has(groupKey)) {
-      edgeGroups.set(groupKey, { relationKey, parentX, parentY, childY, childXs: [] });
+      edgeGroups.set(groupKey, { relationKey, fatherId: person.fatherId || "", parentX, parentY, childY, childXs: [], side: parentX - fatherCenter });
     }
     edgeGroups.get(groupKey).childXs.push(childX);
   });
