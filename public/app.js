@@ -720,39 +720,141 @@ function buildLayout() {
       maxX: Math.max(...groupPositions.map((position) => position.x + position.w)),
     };
   };
-  const firstGen = Math.min(...Array.from(groupsByGen.keys()));
-  const topPositions = (groupsByGen.get(firstGen) || [])
-    .flat()
-    .map((id) => positions.get(id))
-    .filter(Boolean)
-    .sort((a, b) => a.x - b.x);
-  const axisX = topPositions.length
-    ? topPositions[Math.floor(topPositions.length / 2)].x + CARD_W / 2
-    : PADDING + CARD_W / 2;
-  const ROW_CENTER_GAP = Math.max(28, Math.round(GROUP_GAP * 0.72));
-  Array.from(groupsByGen.keys())
-    .sort((a, b) => a - b)
-    .filter((gen) => gen !== firstGen)
-    .forEach((gen) => {
-      const groups = (groupsByGen.get(gen) || [])
-        .slice()
-        .sort((a, b) => {
-          const boundsA = groupBounds(a);
-          const boundsB = groupBounds(b);
-          return ((boundsA?.minX || 0) + (boundsA?.maxX || 0)) / 2
-            - ((boundsB?.minX || 0) + (boundsB?.maxX || 0)) / 2;
-        });
-      const totalWidth = groups.reduce((sum, group) => sum + groupWidth(group), 0)
-        + ROW_CENTER_GAP * Math.max(0, groups.length - 1);
-      let x = axisX - totalWidth / 2;
-      groups.forEach((group) => {
-        group.forEach((id, index) => {
-          const position = positions.get(id);
-          if (position) position.x = x + index * (CARD_W + SPOUSE_GAP);
-        });
-        x += groupWidth(group) + ROW_CENTER_GAP;
-      });
+  const shiftGroup = (group, deltaX) => {
+    group.forEach((id) => {
+      const position = positions.get(id);
+      if (position) position.x += deltaX;
     });
+  };
+  const firstGen = Math.min(...Array.from(groupsByGen.keys()));
+  const childGroupBoundsForGroup = (group, childGen) => {
+    const groupIdSet = new Set(group);
+    const childIds = new Set(people
+      .filter((person) => groupIdSet.has(person.fatherId) || groupIdSet.has(person.motherId))
+      .map((person) => person.id));
+    return (groupsByGen.get(childGen) || [])
+      .filter((childGroup) => childGroup.some((id) => childIds.has(id)))
+      .map(groupBounds)
+      .filter(Boolean);
+  };
+  const rootGroups = groupsByGen.get(firstGen) || [];
+  rootGroups.forEach((group) => {
+    const childGroupBounds = childGroupBoundsForGroup(group, firstGen + 1);
+    if (!childGroupBounds.length) return;
+    const bounds = groupBounds(group);
+    if (!bounds) return;
+    const currentCenter = (bounds.minX + bounds.maxX) / 2;
+    const childCenter = (
+      Math.min(...childGroupBounds.map((item) => item.minX))
+      + Math.max(...childGroupBounds.map((item) => item.maxX))
+    ) / 2;
+    shiftGroup(group, childCenter - currentCenter);
+  });
+  rootGroups
+    .map((group) => ({ group, bounds: groupBounds(group) }))
+    .filter((item) => item.bounds)
+    .sort((a, b) => a.bounds.minX - b.bounds.minX)
+    .reduce((cursor, item) => {
+      if (item.bounds.minX < cursor) {
+        const delta = cursor - item.bounds.minX;
+        shiftGroup(item.group, delta);
+        item.bounds.minX += delta;
+        item.bounds.maxX += delta;
+      }
+      return item.bounds.maxX + GROUP_GAP;
+    }, PADDING);
+  const groupById = new Map();
+  groupsByGen.forEach((groups) => {
+    groups.forEach((group) => {
+      group.forEach((id) => groupById.set(id, group));
+    });
+  });
+  const shiftIds = (ids, deltaX) => {
+    ids.forEach((id) => {
+      const position = positions.get(id);
+      if (position) position.x += deltaX;
+    });
+  };
+  const branchIdsForGroup = (group) => {
+    const result = new Set(group);
+    const queue = [...group];
+    while (queue.length) {
+      const id = queue.shift();
+      const person = byId.get(id);
+      (person?.spouseIds || []).forEach((spouseId) => {
+        if (result.has(spouseId) || !byId.has(spouseId)) return;
+        if ((generation.get(spouseId) ?? 0) < (generation.get(id) ?? 0)) return;
+        result.add(spouseId);
+        queue.push(spouseId);
+      });
+      (children.get(id) || []).forEach((childId) => {
+        const childGroup = groupById.get(childId) || [childId];
+        childGroup.forEach((memberId) => {
+          if (result.has(memberId)) return;
+          result.add(memberId);
+          queue.push(memberId);
+        });
+      });
+    }
+    return result;
+  };
+  const relationChildren = new Map();
+  people.forEach((person) => {
+    const key = parentKeyOf(person);
+    if (!key) return;
+    if (!relationChildren.has(key)) relationChildren.set(key, []);
+    relationChildren.get(key).push(person);
+  });
+  const alignRelationsToParents = (singleOnly = false) => {
+    relationChildren.forEach((childPeople, key) => {
+      if (singleOnly && childPeople.length !== 1) return;
+      const target = parentCenterForKey(key);
+      if (target === null) return;
+      const childGroups = Array.from(new Set(childPeople.map((child) => groupById.get(child.id) || [child.id])));
+      const childBounds = childGroups
+        .map(groupBounds)
+        .filter(Boolean);
+      if (!childBounds.length) return;
+      const childCenter = childPeople.length === 1
+        ? (() => {
+            const childPos = positions.get(childPeople[0].id);
+            return childPos ? childPos.x + childPos.w / 2 : null;
+          })()
+        : (
+            Math.min(...childBounds.map((item) => item.minX))
+            + Math.max(...childBounds.map((item) => item.maxX))
+          ) / 2;
+      if (childCenter === null) return;
+      const delta = target - childCenter;
+      if (Math.abs(delta) < 1) return;
+      const branchIds = new Set();
+      childGroups.forEach((group) => {
+        branchIdsForGroup(group).forEach((id) => branchIds.add(id));
+      });
+      shiftIds(branchIds, delta);
+    });
+  };
+  const packVisibleRows = () => {
+    const ROW_PACK_GAP = Math.max(12, Math.round(GROUP_GAP * 0.2));
+    Array.from(groupsByGen.keys()).sort((a, b) => a - b).forEach((gen) => {
+      (groupsByGen.get(gen) || [])
+        .map((group) => ({ group, bounds: groupBounds(group) }))
+        .filter((item) => item.bounds)
+        .sort((a, b) => a.bounds.minX - b.bounds.minX)
+        .reduce((cursor, item) => {
+          if (cursor !== null && item.bounds.minX < cursor) {
+            const delta = cursor - item.bounds.minX;
+            shiftGroup(item.group, delta);
+            item.bounds.minX += delta;
+            item.bounds.maxX += delta;
+          }
+          return item.bounds.maxX + ROW_PACK_GAP;
+        }, null);
+    });
+  };
+  alignRelationsToParents(false);
+  packVisibleRows();
+  alignRelationsToParents(true);
   const finalMinX = Math.min(...Array.from(positions.values()).map((position) => position.x), PADDING);
   if (finalMinX < PADDING) {
     const delta = PADDING - finalMinX;
