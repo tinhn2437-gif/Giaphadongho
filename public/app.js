@@ -8,6 +8,7 @@ const state = {
   photoTitle: "",
   scale: 0.82,
   pan: { x: 60, y: 40 },
+  hasAutoFitTree: false,
   isAdmin: location.pathname === "/admin",
   authenticated: false,
   viewerAuthenticated: false,
@@ -641,6 +642,18 @@ function buildLayout() {
     position.x += shiftX;
   });
   maxX += shiftX;
+  const contentBounds = Array.from(positions.values()).reduce((bounds, position) => ({
+    minX: Math.min(bounds.minX, position.x),
+    minY: Math.min(bounds.minY, position.y),
+    maxX: Math.max(bounds.maxX, position.x + position.w),
+    maxY: Math.max(bounds.maxY, position.y + position.h),
+  }), { minX: Infinity, minY: Infinity, maxX: 0, maxY: 0 });
+  if (!Number.isFinite(contentBounds.minX)) {
+    contentBounds.minX = PADDING;
+    contentBounds.minY = PADDING;
+    contentBounds.maxX = PADDING;
+    contentBounds.maxY = PADDING;
+  }
 
   return {
     byId,
@@ -651,6 +664,7 @@ function buildLayout() {
     cardH: CARD_H,
     photoW: PHOTO_W,
     photoH: PHOTO_H,
+    contentBounds,
     width: Math.max(maxX + PADDING, 900),
     height: Math.max(maxY + PADDING, 600),
   };
@@ -902,6 +916,13 @@ function renderTree() {
   const routedEdgeGroups = routeTreeEdgeGroups(Array.from(edgeGroups.values()));
   const edgeMaxY = routedEdgeGroups.reduce((max, group) => Math.max(max, group.midY || 0, group.childY || 0, group.parentY || 0), 0);
   layout.height = Math.max(layout.height, edgeMaxY + 96);
+  routedEdgeGroups.forEach((group) => {
+    const childXs = [...new Set(group.childXs)].sort((a, b) => a - b);
+    layout.contentBounds.minX = Math.min(layout.contentBounds.minX, group.parentX, ...childXs);
+    layout.contentBounds.maxX = Math.max(layout.contentBounds.maxX, group.parentX, ...childXs);
+    layout.contentBounds.minY = Math.min(layout.contentBounds.minY, group.parentY, group.midY);
+    layout.contentBounds.maxY = Math.max(layout.contentBounds.maxY, group.childY, group.midY);
+  });
 
   const edges = routedEdgeGroups.flatMap((group) => {
     const childXs = [...new Set(group.childXs)].sort((a, b) => a - b);
@@ -941,7 +962,7 @@ function renderTree() {
 
   return `
     <section class="tree-viewport" id="treeViewport">
-      <div class="tree-canvas" id="treeCanvas" style="width:${layout.width}px;height:${layout.height}px;--card-w:${layout.cardW}px;--card-h:${layout.cardH}px;--photo-w:${layout.photoW}px;--photo-h:${layout.photoH}px">
+      <div class="tree-canvas" id="treeCanvas" data-min-x="${layout.contentBounds.minX}" data-min-y="${layout.contentBounds.minY}" data-max-x="${layout.contentBounds.maxX}" data-max-y="${layout.contentBounds.maxY}" style="width:${layout.width}px;height:${layout.height}px;--card-w:${layout.cardW}px;--card-h:${layout.cardH}px;--photo-w:${layout.photoW}px;--photo-h:${layout.photoH}px">
         <svg class="tree-lines" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}">
           <defs>
             <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -1130,6 +1151,7 @@ function bindPublic() {
     button.addEventListener("click", () => {
       state.view = button.dataset.view;
       state.menuOpen = false;
+      if (state.view === "tree") state.hasAutoFitTree = false;
       renderPublic();
     });
   });
@@ -1138,10 +1160,7 @@ function bindPublic() {
       const action = button.dataset.zoom;
       if (action === "in") state.scale = Math.min(1.8, state.scale + 0.12);
       if (action === "out") state.scale = Math.max(0.28, state.scale - 0.12);
-      if (action === "fit") {
-        state.scale = 0.72;
-        state.pan = { x: 40, y: 28 };
-      }
+      if (action === "fit") fitTreeToViewport();
       state.menuOpen = true;
       applyTransform();
     });
@@ -1189,6 +1208,11 @@ function bindPublic() {
   $("#closePhotoViewer")?.addEventListener("click", closePhotoViewer);
   $("#closePhotoViewerBtn")?.addEventListener("click", closePhotoViewer);
   bindPan();
+  if (!state.hasAutoFitTree && state.view === "tree") {
+    state.hasAutoFitTree = true;
+    fitTreeToViewport();
+    applyTransform();
+  }
 }
 
 async function handleViewerAuth(event) {
@@ -1271,6 +1295,29 @@ function bindPan() {
   viewport.addEventListener("touchend", () => {
     state.touch = null;
   }, { passive: true });
+}
+
+function fitTreeToViewport() {
+  const viewport = $("#treeViewport");
+  const canvas = $("#treeCanvas");
+  if (!viewport || !canvas) return;
+  const minX = Number(canvas.dataset.minX || 0);
+  const minY = Number(canvas.dataset.minY || 0);
+  const maxX = Number(canvas.dataset.maxX || canvas.offsetWidth || 1);
+  const maxY = Number(canvas.dataset.maxY || canvas.offsetHeight || 1);
+  const contentW = Math.max(1, maxX - minX);
+  const contentH = Math.max(1, maxY - minY);
+  const padX = Math.min(140, Math.max(36, viewport.clientWidth * 0.08));
+  const padY = Math.min(110, Math.max(28, viewport.clientHeight * 0.08));
+  const fitScale = Math.min(
+    1.05,
+    Math.max(0.22, Math.min((viewport.clientWidth - padX * 2) / contentW, (viewport.clientHeight - padY * 2) / contentH)),
+  );
+  state.scale = fitScale;
+  state.pan = {
+    x: viewport.clientWidth / 2 - ((minX + maxX) / 2) * fitScale,
+    y: viewport.clientHeight / 2 - ((minY + maxY) / 2) * fitScale,
+  };
 }
 
 function applyTransform() {
