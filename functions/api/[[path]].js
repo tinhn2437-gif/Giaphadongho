@@ -153,7 +153,7 @@ async function writeFamily(env, data) {
 }
 
 function normalizePerson(payload, existingId = "") {
-  return {
+  const person = {
     id: existingId || clean(payload.id) || randomId("p"),
     fullName: clean(payload.fullName),
     gender: clean(payload.gender) || "Khác",
@@ -167,6 +167,7 @@ function normalizePerson(payload, existingId = "") {
     daughterInLawMother: clean(payload.daughterInLawMother),
     daughterHusbandName: clean(payload.daughterHusbandName),
     daughterMarriedAddress: clean(payload.daughterMarriedAddress),
+    daughterChildrenCount: clean(payload.daughterChildrenCount),
     address: clean(payload.address),
     job: clean(payload.job),
     achievements: cleanArray(payload.achievements),
@@ -177,6 +178,12 @@ function normalizePerson(payload, existingId = "") {
     galleryPhotos: cleanArray(payload.galleryPhotos),
     notes: clean(payload.notes),
   };
+  if (person.familyRole !== "Con gái") {
+    person.daughterHusbandName = "";
+    person.daughterMarriedAddress = "";
+    person.daughterChildrenCount = "";
+  }
+  return person;
 }
 
 function normalizeRelationships(data) {

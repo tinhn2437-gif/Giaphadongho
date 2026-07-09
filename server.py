@@ -315,6 +315,7 @@ def normalize_person(raw, existing_id=None):
         "daughterInLawMother": clean_text(raw.get("daughterInLawMother")),
         "daughterHusbandName": clean_text(raw.get("daughterHusbandName")),
         "daughterMarriedAddress": clean_text(raw.get("daughterMarriedAddress")),
+        "daughterChildrenCount": clean_text(raw.get("daughterChildrenCount")),
         "address": clean_text(raw.get("address")),
         "job": clean_text(raw.get("job")),
         "achievements": clean_list(raw.get("achievements")),
@@ -334,6 +335,7 @@ def normalize_person(raw, existing_id=None):
     if person["familyRole"] != "Con gái":
         person["daughterHusbandName"] = ""
         person["daughterMarriedAddress"] = ""
+        person["daughterChildrenCount"] = ""
     return person
 
 

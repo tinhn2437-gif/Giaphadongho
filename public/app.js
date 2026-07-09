@@ -34,6 +34,7 @@ const emptyPerson = {
   daughterInLawMother: "",
   daughterHusbandName: "",
   daughterMarriedAddress: "",
+  daughterChildrenCount: "",
   address: "",
   job: "",
   achievements: [],
@@ -644,6 +645,7 @@ function personMatches(person) {
     person.daughterInLawMother,
     person.daughterHusbandName,
     person.daughterMarriedAddress,
+    person.daughterChildrenCount,
     person.job,
     person.notes,
     ...(person.achievements || []),
@@ -819,6 +821,7 @@ function renderDetail(id) {
           ${isDaughter ? `
           <dt>Họ tên chồng</dt><dd>${esc(person.daughterHusbandName || "Chưa cập nhật")}</dd>
           <dt>Lấy chồng về đâu</dt><dd>${esc(person.daughterMarriedAddress || "Chưa cập nhật")}</dd>
+          <dt>Mấy người con</dt><dd>${esc(person.daughterChildrenCount || "Chưa cập nhật")}</dd>
           ` : ""}
           <dt>Vai trò</dt><dd>${esc(person.familyRole || "Khác")}</dd>
           <dt>Thứ tự</dt><dd>${esc(order || "Chưa rõ do thiếu thông tin bố/mẹ hoặc ngày sinh")}</dd>
@@ -1150,6 +1153,7 @@ function renderAdminPanel() {
       person.daughterInLawMother,
       person.daughterHusbandName,
       person.daughterMarriedAddress,
+      person.daughterChildrenCount,
     ].join(" ")).includes(normalizeText(state.adminQuery)))
     .sort((a, b) => a.fullName.localeCompare(b.fullName, "vi"));
   const editing = personById(state.editingId) || { ...emptyPerson };
@@ -1221,6 +1225,7 @@ function personForm(person) {
       <div class="field ${isDaughterInLaw ? "" : "role-hidden"}" data-role-group="inlaw"><label>Mẹ đẻ của con dâu</label><input name="daughterInLawMother" value="${esc(person.daughterInLawMother)}" placeholder="Người sinh ra con dâu"></div>
       <div class="field ${isDaughter ? "" : "role-hidden"}" data-role-group="daughter"><label>Họ tên chồng</label><input name="daughterHusbandName" value="${esc(person.daughterHusbandName)}" placeholder="Nhập họ và tên chồng của con gái"></div>
       <div class="field ${isDaughter ? "" : "role-hidden"}" data-role-group="daughter"><label>Lấy chồng về đâu</label><input name="daughterMarriedAddress" value="${esc(person.daughterMarriedAddress)}" placeholder="Ví dụ: xóm/xã/huyện/tỉnh nhà chồng"></div>
+      <div class="field ${isDaughter ? "" : "role-hidden"}" data-role-group="daughter"><label>Mấy người con</label><input name="daughterChildrenCount" type="number" min="0" step="1" value="${esc(person.daughterChildrenCount || "")}" placeholder="Ví dụ: 2"></div>
       <div class="field"><label>Địa chỉ ghi chú</label><input name="address" value="${esc(person.address)}" placeholder="Có thể bỏ trống nếu đã nhập nơi ở"></div>
       <div class="field"><label>Nghề nghiệp</label><input name="job" value="${esc(person.job)}"></div>
       <div class="field ${isDaughterInLaw ? "role-hidden" : ""}" data-role-group="birth-parent"><label>Bố đẻ</label>${selectPerson("fatherId", person.fatherId, person.id, false)}</div>
@@ -1349,6 +1354,7 @@ async function savePerson(event) {
       daughterInLawMother: formData.get("familyRole") === "Con dâu" ? formData.get("daughterInLawMother") : "",
       daughterHusbandName: formData.get("familyRole") === "Con gái" ? formData.get("daughterHusbandName") : "",
       daughterMarriedAddress: formData.get("familyRole") === "Con gái" ? formData.get("daughterMarriedAddress") : "",
+      daughterChildrenCount: formData.get("familyRole") === "Con gái" ? formData.get("daughterChildrenCount") : "",
       address: formData.get("address"),
       job: formData.get("job"),
       fatherId: formData.get("familyRole") === "Con dâu" ? "" : formData.get("fatherId"),
@@ -1513,6 +1519,7 @@ function csvToPeople(text) {
       daughterInLawMother: record.daughterInLawMother || record.meConDau || record.meCuaConDau || "",
       daughterHusbandName: record.daughterHusbandName || record.chongConGai || record.hoTenChong || "",
       daughterMarriedAddress: record.daughterMarriedAddress || record.layChongVeDau || record.queChong || "",
+      daughterChildrenCount: record.daughterChildrenCount || record.soNguoiCon || record.soCon || record.mayNguoiCon || "",
       address: record.address || record.diaChi || "",
       job: record.job || record.ngheNghiep || "",
       achievements: String(record.achievements || record.thanhTich || "").split(";").map((item) => item.trim()).filter(Boolean),
