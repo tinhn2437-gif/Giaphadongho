@@ -642,60 +642,6 @@ function buildLayout() {
     position.x += shiftX;
   });
   maxX += shiftX;
-
-  const groupBounds = (group) => {
-    const groupPositions = group.map((id) => positions.get(id)).filter(Boolean);
-    if (!groupPositions.length) return null;
-    return {
-      minX: Math.min(...groupPositions.map((position) => position.x)),
-      maxX: Math.max(...groupPositions.map((position) => position.x + position.w)),
-    };
-  };
-  const shiftGroup = (group, deltaX) => {
-    group.forEach((id) => {
-      const position = positions.get(id);
-      if (position) position.x += deltaX;
-    });
-  };
-  const resolveRowCollisions = (groups) => {
-    const items = groups
-      .map((group) => ({ group, bounds: groupBounds(group) }))
-      .filter((item) => item.bounds)
-      .sort((a, b) => a.bounds.minX - b.bounds.minX);
-    let cursor = PADDING;
-    items.forEach((item) => {
-      if (item.bounds.minX < cursor) {
-        const delta = cursor - item.bounds.minX;
-        shiftGroup(item.group, delta);
-        item.bounds.minX += delta;
-        item.bounds.maxX += delta;
-      }
-      cursor = item.bounds.maxX + GROUP_GAP;
-    });
-  };
-
-  Array.from(groupsByGen.keys())
-    .sort((a, b) => b - a)
-    .forEach((gen) => {
-      const groups = groupsByGen.get(gen) || [];
-      groups.forEach((group) => {
-        const groupIdSet = new Set(group);
-        const childCenters = people
-          .filter((person) => groupIdSet.has(person.fatherId) || groupIdSet.has(person.motherId))
-          .map((person) => positions.get(person.id))
-          .filter(Boolean)
-          .map((position) => position.x + position.w / 2);
-        if (!childCenters.length) return;
-        const bounds = groupBounds(group);
-        if (!bounds) return;
-        const currentCenter = (bounds.minX + bounds.maxX) / 2;
-        const childCenter = (Math.min(...childCenters) + Math.max(...childCenters)) / 2;
-        shiftGroup(group, childCenter - currentCenter);
-      });
-      resolveRowCollisions(groups);
-    });
-
-  maxX = Math.max(...Array.from(positions.values()).map((position) => position.x + position.w), PADDING);
   const contentBounds = Array.from(positions.values()).reduce((bounds, position) => ({
     minX: Math.min(bounds.minX, position.x),
     minY: Math.min(bounds.minY, position.y),
