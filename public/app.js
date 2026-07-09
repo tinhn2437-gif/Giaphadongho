@@ -814,9 +814,9 @@ function renderDetail(id) {
           ` : `
           <dt>Bố đẻ</dt><dd>${father ? linkPerson(father) : "Chưa cập nhật"}</dd>
           <dt>Mẹ đẻ</dt><dd>${mother ? linkPerson(mother) : "Chưa cập nhật"}</dd>
-          <dt>Vợ/chồng</dt><dd>${spouses.length ? spouses.map(linkPerson).join(", ") : "Chưa cập nhật"}</dd>
+          ${isDaughter ? "" : `<dt>Vợ/chồng</dt><dd>${spouses.length ? spouses.map(linkPerson).join(", ") : "Chưa cập nhật"}</dd>`}
           `}
-          <dt>Con</dt><dd>${children.length ? children.map(linkPerson).join(", ") : "Chưa cập nhật"}</dd>
+          ${isDaughter ? "" : `<dt>Con</dt><dd>${children.length ? children.map(linkPerson).join(", ") : "Chưa cập nhật"}</dd>`}
           <dt>Năm lập gia đình</dt><dd>${esc(marriageYear || "Chưa cập nhật")}</dd>
           ${isDaughter ? `
           <dt>Họ tên chồng</dt><dd>${esc(person.daughterHusbandName || "Chưa cập nhật")}</dd>
