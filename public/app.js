@@ -452,9 +452,11 @@ function buildLayout() {
   relationPressure.forEach((relations, gen) => {
     const relationCount = relations.size;
     const maxChildren = Math.max(...Array.from(relations.values()), 1);
-    const extraForRelations = Math.max(0, relationCount - 2) * 18;
-    const extraForChildren = Math.max(0, maxChildren - 3) * 8;
-    rowGapAfter.set(gen, BASE_ROW_GAP + Math.min(260, extraForRelations + extraForChildren));
+    const childTotal = Array.from(relations.values()).reduce((sum, count) => sum + count, 0);
+    const extraForRelations = Math.max(0, relationCount - 1) * 30;
+    const extraForChildren = Math.max(0, maxChildren - 2) * 12;
+    const extraForCrowding = Math.max(0, childTotal - 6) * 5;
+    rowGapAfter.set(gen, BASE_ROW_GAP + Math.min(420, extraForRelations + extraForChildren + extraForCrowding));
   });
   const yForGeneration = new Map();
   Array.from(generations.keys())
@@ -779,17 +781,35 @@ function rangesOverlap(a, b, gap = 10) {
 function routeTreeEdgeGroups(groups) {
   const HORIZONTAL_GAP = 28;
   const VERTICAL_LANE_GAP = 16;
-  const occupied = [];
-  const conflictAt = (span, y) => occupied.some((item) => (
-    Math.abs(item.y - y) < VERTICAL_LANE_GAP
-    && rangesOverlap(span, item, HORIZONTAL_GAP)
-  ));
-  const candidateYs = (top, bottom, ideal) => {
+  const CROSS_GAP = 7;
+  const occupiedHorizontals = [];
+  const occupiedVerticals = [];
+  const between = (value, a, b, gap = 0) => value >= Math.min(a, b) - gap && value <= Math.max(a, b) + gap;
+  const xInSpan = (x, span, gap = 0) => x >= span.start - gap && x <= span.end + gap;
+  const verticalSegmentsFor = (item, y) => [
+    { x: item.group.parentX, startY: item.group.parentY, endY: y },
+    ...item.childXs.map((childX) => ({ x: childX, startY: y, endY: item.group.childY - 8 })),
+  ];
+  const conflictScore = (item, y) => {
+    let score = 0;
+    occupiedHorizontals.forEach((line) => {
+      if (Math.abs(line.y - y) < VERTICAL_LANE_GAP && rangesOverlap(item.span, line, HORIZONTAL_GAP)) score += 100;
+      verticalSegmentsFor(item, y).forEach((vertical) => {
+        if (xInSpan(vertical.x, line, CROSS_GAP) && between(line.y, vertical.startY, vertical.endY, CROSS_GAP)) score += 18;
+      });
+    });
+    occupiedVerticals.forEach((line) => {
+      if (xInSpan(line.x, item.span, CROSS_GAP) && between(y, line.startY, line.endY, CROSS_GAP)) score += 18;
+    });
+    return score;
+  };
+  const candidateYs = (top, bottom, ideal, childY) => {
     const minY = Math.min(top, bottom);
     const maxY = Math.max(top, bottom);
     const values = [];
     const add = (value) => {
-      const rounded = Math.round(Math.max(minY, Math.min(maxY, value)));
+      const rounded = Math.round(value);
+      if (rounded < top - 36 || rounded > childY - 22) return;
       if (!values.includes(rounded)) values.push(rounded);
     };
     add(ideal);
@@ -797,6 +817,8 @@ function routeTreeEdgeGroups(groups) {
       add(ideal - offset);
       add(ideal + offset);
     }
+    for (let y = minY; y <= maxY; y += VERTICAL_LANE_GAP) add(y);
+    for (let y = maxY + VERTICAL_LANE_GAP; y <= childY - 24; y += VERTICAL_LANE_GAP) add(y);
     return values;
   };
 
@@ -810,7 +832,7 @@ function routeTreeEdgeGroups(groups) {
       const top = group.parentY + 24;
       const bottom = group.childY - 42;
       const ideal = top < bottom ? top + (bottom - top) / 2 : group.parentY + (group.childY - group.parentY) / 2;
-      return { group, span, top, bottom, ideal };
+      return { group, childXs, span, top, bottom, ideal };
     })
     .sort((a, b) => {
       const verticalDiff = a.top - b.top;
@@ -820,13 +842,16 @@ function routeTreeEdgeGroups(groups) {
       return a.span.start - b.span.start;
     })
     .forEach((item) => {
-      let y = candidateYs(item.top, item.bottom, item.ideal).find((candidate) => !conflictAt(item.span, candidate));
+      const candidates = candidateYs(item.top, item.bottom, item.ideal, item.group.childY);
+      let y = candidates.find((candidate) => conflictScore(item, candidate) === 0);
       if (y === undefined) {
-        y = Math.round(item.ideal);
-        while (conflictAt(item.span, y)) y += VERTICAL_LANE_GAP;
+        y = candidates
+          .map((candidate) => ({ y: candidate, score: conflictScore(item, candidate), distance: Math.abs(candidate - item.ideal) }))
+          .sort((a, b) => a.score - b.score || a.distance - b.distance)[0]?.y || Math.round(item.ideal);
       }
       item.group.midY = y;
-      occupied.push({ ...item.span, y });
+      occupiedHorizontals.push({ ...item.span, y });
+      occupiedVerticals.push(...verticalSegmentsFor(item, y));
     });
 
   return groups;
