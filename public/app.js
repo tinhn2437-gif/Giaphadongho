@@ -53,15 +53,21 @@ const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selec
 const app = $("#app");
 
 async function api(path, options = {}) {
-  const response = await fetch(path, {
-    credentials: "same-origin",
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
-  });
+  let response;
+  try {
+    response = await fetch(path, {
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+      ...options,
+    });
+  } catch (error) {
+    throw new Error("Không kết nối được máy chủ. Hãy kiểm tra mạng rồi thử lại.");
+  }
   if (response.status === 204) return null;
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     if (response.status === 413) throw new Error("Ảnh quá lớn, hãy chọn ảnh nhỏ hơn hoặc để web tự nén lại rồi thử lần nữa.");
+    if (response.status === 401) throw new Error(data.error || "Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.");
     throw new Error(data.error || "Có lỗi xảy ra.");
   }
   return data;
@@ -1698,6 +1704,9 @@ async function login(event) {
 async function savePerson(event) {
   event.preventDefault();
   const form = event.currentTarget;
+  const submitButton = form.querySelector('button[type="submit"]');
+  if (submitButton?.disabled) return;
+  if (submitButton) submitButton.disabled = true;
   const formData = new FormData(form);
   let photo = String(formData.get("photo") || "").trim();
   const file = formData.get("photoFile");
@@ -1750,6 +1759,8 @@ async function savePerson(event) {
     toast("Đã lưu thông tin.");
   } catch (error) {
     toast(error.message);
+  } finally {
+    if (submitButton) submitButton.disabled = false;
   }
 }
 

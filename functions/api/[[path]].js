@@ -6,6 +6,7 @@ const DEFAULT_FAMILY_NAME = "Gia phả dòng họ Nguyễn Hữu";
 const D1_FREE_STORAGE_BYTES = 5 * 1024 * 1024 * 1024;
 const D1_DATABASE_LIMIT_BYTES = 10 * 1024 * 1024 * 1024;
 const R2_FREE_STORAGE_BYTES = 10 * 1024 * 1024 * 1024;
+const PHOTO_DATA_URL_LIMIT = 1600000;
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -50,6 +51,13 @@ function fromBase64Url(value) {
 function bytesFromBase64(value) {
   const binary = atob(value);
   return Uint8Array.from(binary, (char) => char.charCodeAt(0));
+}
+
+function publicError(message, status = 400) {
+  const error = new Error(message);
+  error.status = status;
+  error.expose = true;
+  return error;
 }
 
 function randomId(prefix) {
@@ -157,6 +165,7 @@ async function writeFamily(env, data) {
   await env.DB.prepare(
     "INSERT INTO family_data (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at",
   ).bind(FAMILY_ROW_ID, JSON.stringify(next), next.updatedAt).run();
+  await pruneUnusedPhotos(env, next);
   return next;
 }
 
@@ -192,6 +201,88 @@ function normalizePerson(payload, existingId = "") {
     person.daughterChildrenCount = "";
   }
   return person;
+}
+
+function parsePhotoDataUrl(dataUrl) {
+  const value = clean(dataUrl);
+  const match = value.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,([a-zA-Z0-9+/=]+)$/);
+  if (!match) return null;
+  if (value.length > PHOTO_DATA_URL_LIMIT) {
+    throw publicError("Ảnh quá lớn. Hãy chọn ảnh nhỏ hơn hoặc giảm dung lượng ảnh trước khi tải lên.", 400);
+  }
+  return { contentType: match[1], data: match[2] };
+}
+
+async function storePhotoDataUrl(env, dataUrl) {
+  const parsed = parsePhotoDataUrl(dataUrl);
+  if (!parsed) throw publicError("Ảnh không hợp lệ.", 400);
+  const id = randomId("photo");
+  await env.DB.prepare(
+    "INSERT INTO photos (id, content_type, data, created_at) VALUES (?, ?, ?, ?)",
+  ).bind(id, parsed.contentType, parsed.data, new Date().toISOString()).run();
+  return `/api/photos/${id}`;
+}
+
+async function ensureExternalPersonPhotos(env, person) {
+  if (String(person.photo || "").startsWith("data:image/")) {
+    person.photo = await storePhotoDataUrl(env, person.photo);
+  }
+  const gallery = [];
+  for (const url of cleanArray(person.galleryPhotos)) {
+    gallery.push(String(url).startsWith("data:image/") ? await storePhotoDataUrl(env, url) : url);
+  }
+  person.galleryPhotos = [...new Set(gallery)];
+  return person;
+}
+
+function referencedPhotoIds(data) {
+  const ids = new Set();
+  const add = (url) => {
+    const match = String(url || "").match(/^\/api\/photos\/([^/?#]+)/);
+    if (match) ids.add(match[1]);
+  };
+  (Array.isArray(data.people) ? data.people : []).forEach((person) => {
+    add(person.photo);
+    cleanArray(person.galleryPhotos).forEach(add);
+  });
+  return ids;
+}
+
+async function pruneUnusedPhotos(env, data) {
+  const keep = referencedPhotoIds(data);
+  const rows = await env.DB.prepare("SELECT id FROM photos").all();
+  const unused = (rows.results || []).map((row) => row.id).filter((id) => !keep.has(id));
+  for (const id of unused) {
+    await env.DB.prepare("DELETE FROM photos WHERE id = ?").bind(id).run();
+  }
+}
+
+function familyDiagnostics(data) {
+  const findings = [];
+  const people = Array.isArray(data.people) ? data.people : [];
+  const seen = new Map();
+  people.forEach((person) => {
+    if (!clean(person.id)) findings.push({ type: "missing-id", name: clean(person.fullName) });
+    if (!clean(person.fullName)) findings.push({ type: "missing-name", id: clean(person.id) });
+    if (seen.has(person.id)) findings.push({ type: "duplicate-id", id: person.id, firstName: seen.get(person.id), name: person.fullName });
+    if (person.id) seen.set(person.id, person.fullName);
+  });
+  const byId = new Map(people.map((person) => [person.id, person]));
+  people.forEach((person) => {
+    ["fatherId", "motherId"].forEach((field) => {
+      if (person[field] && !byId.has(person[field])) findings.push({ type: "bad-parent", name: person.fullName, field, id: person[field] });
+      if (person[field] && person[field] === person.id) findings.push({ type: "self-parent", name: person.fullName, field });
+    });
+    cleanArray(person.spouseIds).forEach((spouseId) => {
+      const spouse = byId.get(spouseId);
+      if (!spouse) findings.push({ type: "bad-spouse", name: person.fullName, id: spouseId });
+      else if (!cleanArray(spouse.spouseIds).includes(person.id)) findings.push({ type: "one-way-spouse", name: person.fullName, spouseName: spouse.fullName });
+    });
+    [person.photo, ...cleanArray(person.galleryPhotos)].forEach((url) => {
+      if (String(url || "").startsWith("data:image/")) findings.push({ type: "embedded-photo", name: person.fullName });
+    });
+  });
+  return findings;
 }
 
 function normalizeRelationships(data) {
@@ -428,6 +519,16 @@ async function handleAdminStorage(request, env) {
   });
 }
 
+async function handleAdminDiagnostics(request, env) {
+  if (!await isAdmin(request, env)) return json({ error: "Bạn cần đăng nhập admin." }, 401);
+  const data = await readFamily(env);
+  return json({
+    ok: true,
+    peopleCount: data.people.length,
+    findings: familyDiagnostics(data),
+  });
+}
+
 async function handleViewerLogin(request, env) {
   const payload = await bodyJson(request);
   const username = normalizeUsername(payload.username);
@@ -472,7 +573,7 @@ async function handlePeopleGet(request, env) {
 
 async function handlePeopleCreate(request, env) {
   if (!await isAdmin(request, env)) return json({ error: "Bạn cần đăng nhập admin." }, 401);
-  const person = normalizePerson(await bodyJson(request));
+  const person = await ensureExternalPersonPhotos(env, normalizePerson(await bodyJson(request)));
   if (!person.fullName) return json({ error: "Vui lòng nhập họ tên." }, 400);
   const data = await readFamily(env);
   data.people.push(person);
@@ -485,7 +586,8 @@ async function handlePeopleUpdate(request, env, id) {
   const data = await readFamily(env);
   const index = data.people.findIndex((person) => person.id === id);
   if (index < 0) return json({ error: "Không tìm thấy người này." }, 404);
-  const updated = normalizePerson(await bodyJson(request), id);
+  const updated = await ensureExternalPersonPhotos(env, normalizePerson(await bodyJson(request), id));
+  if (!updated.fullName) return json({ error: "Vui lòng nhập họ tên." }, 400);
   const selectedSpouses = new Set(updated.spouseIds);
   data.people.forEach((person) => {
     if (!selectedSpouses.has(person.id)) {
@@ -518,9 +620,9 @@ async function handleImport(request, env) {
   if (!Array.isArray(payload.people)) return json({ error: "File nhập phải có danh sách people." }, 400);
   const data = {
     familyName: clean(payload.familyName) || DEFAULT_FAMILY_NAME,
-    people: payload.people
+    people: await Promise.all(payload.people
       .filter((person) => person && typeof person === "object" && clean(person.fullName))
-      .map((person) => normalizePerson(person)),
+      .map((person) => ensureExternalPersonPhotos(env, normalizePerson(person)))),
   };
   return json(await writeFamily(env, data));
 }
@@ -529,18 +631,7 @@ async function handlePhoto(request, env) {
   if (!await isAdmin(request, env)) return json({ error: "Bạn cần đăng nhập admin." }, 401);
   const payload = await bodyJson(request);
   const dataUrl = clean(payload.dataUrl);
-  const match = dataUrl.match(/^data:(image\/[a-zA-Z0-9.+-]+);base64,([a-zA-Z0-9+/=]+)$/);
-  if (!match) {
-    return json({ error: "Ảnh không hợp lệ." }, 400);
-  }
-  if (dataUrl.length > 1600000) {
-    return json({ error: "Ảnh quá lớn. Hãy chọn ảnh nhỏ hơn hoặc giảm dung lượng ảnh trước khi tải lên." }, 400);
-  }
-  const id = randomId("photo");
-  await env.DB.prepare(
-    "INSERT INTO photos (id, content_type, data, created_at) VALUES (?, ?, ?, ?)",
-  ).bind(id, match[1], match[2], new Date().toISOString()).run();
-  return json({ url: `/api/photos/${id}` });
+  return json({ url: await storePhotoDataUrl(env, dataUrl) });
 }
 
 async function handlePhotoGet(request, env, id) {
@@ -567,6 +658,7 @@ export async function onRequest(context) {
     if (method === "GET" && path === "viewer-session") return handleViewerSession(request, env);
     if (method === "GET" && path === "me") return handleMe(request, env);
     if (method === "GET" && path === "admin/storage") return handleAdminStorage(request, env);
+    if (method === "GET" && path === "admin/diagnostics") return handleAdminDiagnostics(request, env);
     if (method === "GET" && path === "admin/users") return handleAdminUsersList(request, env);
     if (method === "POST" && path === "admin/users") return handleAdminUsersCreate(request, env);
     if (method === "PUT" && parts[0] === "admin" && parts[1] === "users" && parts[2]) return handleAdminUsersUpdate(request, env, decodeURIComponent(parts[2]));
@@ -590,6 +682,9 @@ export async function onRequest(context) {
 
     return json({ error: "Không tìm thấy." }, 404);
   } catch (error) {
-    return json({ error: "Server error" }, 500);
+    if (error?.expose) return json({ error: error.message }, error.status || 400);
+    const code = randomId("err");
+    console.error(code, error?.stack || error?.message || error);
+    return json({ error: `Lỗi máy chủ. Mã lỗi: ${code}` }, 500);
   }
 }
