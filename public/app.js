@@ -419,6 +419,59 @@ function buildLayout() {
     return parentPositions.reduce((sum, item) => sum + item.x + item.w / 2, 0) / parentPositions.length;
   };
   const groupBirthOrder = (group) => birthSortValue(groupAnchor(group));
+  const marriageSortValue = (person) => {
+    const match = String(person?.marriageYear || "").match(/\d{4}/);
+    return match ? Number.parseInt(match[0], 10) : Number.MAX_SAFE_INTEGER;
+  };
+  const compareSpouses = (a, b) => {
+    const marriageDiff = marriageSortValue(a) - marriageSortValue(b);
+    if (marriageDiff !== 0) return marriageDiff;
+    const birthDiff = birthSortValue(a) - birthSortValue(b);
+    if (birthDiff !== 0) return birthDiff;
+    return (a?.fullName || "").localeCompare(b?.fullName || "", "vi");
+  };
+  const defaultGroupOrder = (group) => group.slice().sort((a, b) => {
+    const personA = byId.get(a);
+    const personB = byId.get(b);
+    if (personA?.familyRole === "Con dâu" && personB?.familyRole !== "Con dâu") return -1;
+    if (personA?.familyRole !== "Con dâu" && personB?.familyRole === "Con dâu") return 1;
+    return (personA?.fullName || "").localeCompare(personB?.fullName || "", "vi");
+  });
+  const spouseGroupOrder = (group) => {
+    const members = group.map((id) => byId.get(id)).filter(Boolean);
+    const memberIds = new Set(group);
+    const hubs = members
+      .map((person) => ({
+        person,
+        spouseCount: (person.spouseIds || []).filter((id) => memberIds.has(id)).length,
+      }))
+      .filter((item) => item.spouseCount >= 2)
+      .sort((a, b) => {
+        const maleDiff = (b.person.gender === "Nam" ? 1 : 0) - (a.person.gender === "Nam" ? 1 : 0);
+        if (maleDiff !== 0) return maleDiff;
+        const inLawDiff = (a.person.familyRole === "Con dâu" ? 1 : 0) - (b.person.familyRole === "Con dâu" ? 1 : 0);
+        if (inLawDiff !== 0) return inLawDiff;
+        return b.spouseCount - a.spouseCount;
+      });
+    const hub = hubs[0]?.person;
+    if (!hub) return defaultGroupOrder(group);
+
+    const spouses = (hub.spouseIds || [])
+      .map((id) => byId.get(id))
+      .filter((person) => person && memberIds.has(person.id))
+      .sort(compareSpouses);
+    if (spouses.length < 2) return defaultGroupOrder(group);
+
+    const spouseIds = new Set(spouses.map((person) => person.id));
+    const others = defaultGroupOrder(group.filter((id) => id !== hub.id && !spouseIds.has(id)));
+    const leftCount = Math.ceil(spouses.length / 2);
+    return [
+      ...spouses.slice(0, leftCount).map((person) => person.id),
+      hub.id,
+      ...spouses.slice(leftCount).map((person) => person.id),
+      ...others,
+    ];
+  };
 
   Array.from(generations.keys())
     .sort((a, b) => a - b)
@@ -444,13 +497,7 @@ function buildLayout() {
               }
             });
           }
-          groups.push(groupIds.sort((a, b) => {
-            const personA = byId.get(a);
-            const personB = byId.get(b);
-            if (personA?.familyRole === "Con dâu" && personB?.familyRole !== "Con dâu") return -1;
-            if (personA?.familyRole !== "Con dâu" && personB?.familyRole === "Con dâu") return 1;
-            return (personA?.fullName || "").localeCompare(personB?.fullName || "", "vi");
-          }));
+          groups.push(spouseGroupOrder(groupIds));
         });
 
       const y = PADDING + gen * (CARD_H + ROW_GAP);
@@ -667,7 +714,9 @@ function renderTree() {
       if (person.id > spouseId) return;
       const spousePos = layout.positions.get(spouseId);
       if (!spousePos || spousePos.y !== pos.y) return;
-      spouseLines.push(`<line class="spouse-line" x1="${pos.x + pos.w}" y1="${pos.y + pos.h / 2}" x2="${spousePos.x}" y2="${spousePos.y + spousePos.h / 2}"></line>`);
+      const left = pos.x <= spousePos.x ? pos : spousePos;
+      const right = left === pos ? spousePos : pos;
+      spouseLines.push(`<line class="spouse-line" x1="${left.x + left.w}" y1="${left.y + left.h / 2}" x2="${right.x}" y2="${right.y + right.h / 2}"></line>`);
     });
 
     const parentPositions = [person.fatherId, person.motherId].map((id) => layout.positions.get(id)).filter(Boolean);
