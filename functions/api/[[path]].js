@@ -3,6 +3,9 @@ const VIEWER_COOKIE = "family_viewer";
 const FAMILY_ROW_ID = "main";
 const PASSWORD_ITERATIONS = 8000;
 const DEFAULT_FAMILY_NAME = "Gia phả dòng họ Nguyễn Hữu";
+const D1_FREE_STORAGE_BYTES = 5 * 1024 * 1024 * 1024;
+const D1_DATABASE_LIMIT_BYTES = 10 * 1024 * 1024 * 1024;
+const R2_FREE_STORAGE_BYTES = 10 * 1024 * 1024 * 1024;
 
 function json(data, status = 200, headers = {}) {
   return new Response(JSON.stringify(data), {
@@ -384,6 +387,47 @@ async function handleAdminUsersDelete(request, env, username) {
   return json({ ok: true });
 }
 
+async function handleAdminStorage(request, env) {
+  if (!await isAdmin(request, env)) return json({ error: "Bạn cần đăng nhập admin." }, 401);
+  const family = await env.DB.prepare(
+    "SELECT COALESCE(SUM(LENGTH(json)), 0) AS bytes, COUNT(*) AS rows FROM family_data",
+  ).first();
+  const photos = await env.DB.prepare(
+    "SELECT COALESCE(SUM(LENGTH(data)), 0) AS bytes, COUNT(*) AS count FROM photos",
+  ).first();
+  const users = await env.DB.prepare(
+    "SELECT COALESCE(SUM(LENGTH(username) + LENGTH(display_name) + LENGTH(password_hash) + LENGTH(salt) + LENGTH(COALESCE(role, 'viewer'))), 0) AS bytes, COUNT(*) AS count FROM users",
+  ).first();
+  const familyBytes = Number(family?.bytes || 0);
+  const photoBytes = Number(photos?.bytes || 0);
+  const userBytes = Number(users?.bytes || 0);
+  const usedBytes = familyBytes + photoBytes + userBytes;
+  return json({
+    provider: "Cloudflare D1",
+    estimated: true,
+    usedBytes,
+    freeQuotaBytes: D1_FREE_STORAGE_BYTES,
+    databaseLimitBytes: D1_DATABASE_LIMIT_BYTES,
+    remainingFreeBytes: Math.max(0, D1_FREE_STORAGE_BYTES - usedBytes),
+    usedPercent: D1_FREE_STORAGE_BYTES ? Math.min(100, usedBytes / D1_FREE_STORAGE_BYTES * 100) : 0,
+    parts: {
+      familyBytes,
+      photoBytes,
+      userBytes,
+      peopleCount: (await readFamily(env)).people.length,
+      photoCount: Number(photos?.count || 0),
+      accountCount: Number(users?.count || 0) + 1,
+    },
+    notes: {
+      d1Free: "D1 miễn phí: 5 GB tổng dung lượng lưu trữ.",
+      d1DatabaseLimit: "Mỗi D1 database tối đa 10 GB.",
+      r2Free: "R2 miễn phí: 10 GB-month/tháng nếu chuyển ảnh sang R2.",
+      estimate: "Số đang dùng là ước tính từ dữ liệu trong bảng, có thể thấp hơn số Cloudflare Dashboard vì chưa tính overhead nội bộ.",
+    },
+    r2FreeQuotaBytes: R2_FREE_STORAGE_BYTES,
+  });
+}
+
 async function handleViewerLogin(request, env) {
   const payload = await bodyJson(request);
   const username = normalizeUsername(payload.username);
@@ -522,6 +566,7 @@ export async function onRequest(context) {
 
     if (method === "GET" && path === "viewer-session") return handleViewerSession(request, env);
     if (method === "GET" && path === "me") return handleMe(request, env);
+    if (method === "GET" && path === "admin/storage") return handleAdminStorage(request, env);
     if (method === "GET" && path === "admin/users") return handleAdminUsersList(request, env);
     if (method === "POST" && path === "admin/users") return handleAdminUsersCreate(request, env);
     if (method === "PUT" && parts[0] === "admin" && parts[1] === "users" && parts[2]) return handleAdminUsersUpdate(request, env, decodeURIComponent(parts[2]));

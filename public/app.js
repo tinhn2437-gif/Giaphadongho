@@ -14,6 +14,7 @@ const state = {
   viewerUser: null,
   viewerAccounts: [],
   currentAdmin: null,
+  storageStats: null,
   menuOpen: false,
   editingId: "",
   adminQuery: "",
@@ -109,6 +110,14 @@ async function loadViewerAccounts() {
   } catch (error) {
     state.viewerAccounts = [];
     state.currentAdmin = null;
+  }
+}
+
+async function loadStorageStats() {
+  try {
+    state.storageStats = await api("/api/admin/storage");
+  } catch (error) {
+    state.storageStats = null;
   }
 }
 
@@ -1257,7 +1266,7 @@ async function renderAdmin() {
     return;
   }
   await loadData();
-  await loadViewerAccounts();
+  await Promise.all([loadViewerAccounts(), loadStorageStats()]);
   renderAdminPanel();
 }
 
@@ -1296,6 +1305,7 @@ function renderAdminPanel() {
                 <label class="ghost-btn">Nhập JSON<input id="importJson" type="file" accept=".json,application/json" hidden></label>
                 <label class="ghost-btn">Nhập CSV<input id="importCsv" type="file" accept=".csv,text/csv" hidden></label>
               </div>
+              ${storageSummary()}
             </div>
             <div class="person-list">
               ${people.map((person) => `
@@ -1358,6 +1368,49 @@ function renderAdminPanel() {
     </div>
   `;
   bindAdmin();
+}
+
+function formatBytes(bytes) {
+  const value = Number(bytes || 0);
+  const units = ["B", "KB", "MB", "GB"];
+  let size = value;
+  let index = 0;
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024;
+    index += 1;
+  }
+  const digits = index >= 2 ? 2 : 0;
+  return `${size.toFixed(digits)} ${units[index]}`;
+}
+
+function storageSummary() {
+  const stats = state.storageStats;
+  if (!stats) {
+    return `
+      <div class="storage-box">
+        <div class="storage-head"><strong>Dung lượng</strong><span>Đang tải</span></div>
+        <div class="storage-bar"><span style="width: 0%"></span></div>
+      </div>
+    `;
+  }
+  const percent = Math.max(0, Math.min(100, Number(stats.usedPercent || 0)));
+  const parts = stats.parts || {};
+  return `
+    <div class="storage-box">
+      <div class="storage-head">
+        <strong>Dung lượng web</strong>
+        <span>${percent.toFixed(percent < 1 ? 3 : 1)}%</span>
+      </div>
+      <div class="storage-bar"><span style="width: ${percent}%"></span></div>
+      <div class="storage-lines">
+        <span>Đã dùng: <strong>${formatBytes(stats.usedBytes)}</strong></span>
+        <span>Còn miễn phí: <strong>${formatBytes(stats.remainingFreeBytes)}</strong> / ${formatBytes(stats.freeQuotaBytes)}</span>
+        <span>Ảnh: ${formatBytes(parts.photoBytes)} · ${parts.photoCount || 0} ảnh</span>
+        <span>Dữ liệu: ${formatBytes(parts.familyBytes)} · ${parts.peopleCount || 0} người</span>
+      </div>
+      <p class="storage-note">Cloudflare D1 miễn phí 5 GB. R2 lưu ảnh miễn phí 10 GB-tháng nếu sau này chuyển ảnh sang R2.</p>
+    </div>
+  `;
 }
 
 function personForm(person) {
@@ -1473,7 +1526,7 @@ async function createViewerAccount(event) {
       }),
     });
     form.reset();
-    await loadViewerAccounts();
+    await Promise.all([loadViewerAccounts(), loadStorageStats()]);
     renderAdminPanel();
     toast("Đã tạo tài khoản.");
   } catch (error) {
@@ -1495,7 +1548,7 @@ async function updateAccessAccount(event) {
         password: formData.get("password"),
       }),
     });
-    await loadViewerAccounts();
+    await Promise.all([loadViewerAccounts(), loadStorageStats()]);
     renderAdminPanel();
     toast("Đã cập nhật tài khoản.");
   } catch (error) {
@@ -1507,7 +1560,7 @@ async function deleteViewerAccount(username) {
   if (!username || !confirm(`Xóa tài khoản ${username}?`)) return;
   try {
     await api(`/api/admin/users/${encodeURIComponent(username)}`, { method: "DELETE" });
-    await loadViewerAccounts();
+    await Promise.all([loadViewerAccounts(), loadStorageStats()]);
     renderAdminPanel();
     toast("Đã xóa tài khoản.");
   } catch (error) {
@@ -1600,7 +1653,7 @@ async function savePerson(event) {
     const method = state.editingId ? "PUT" : "POST";
     const path = state.editingId ? `/api/people/${encodeURIComponent(state.editingId)}` : "/api/people";
     const saved = await api(path, { method, body: JSON.stringify(payload) });
-    await loadData();
+    await Promise.all([loadData(), loadStorageStats()]);
     state.editingId = saved.id;
     renderAdminPanel();
     toast("Đã lưu thông tin.");
@@ -1683,7 +1736,7 @@ async function deletePerson() {
   if (!person || !confirm(`Xóa ${person.fullName}? Quan hệ liên quan cũng sẽ được gỡ.`)) return;
   try {
     await api(`/api/people/${encodeURIComponent(person.id)}`, { method: "DELETE" });
-    await loadData();
+    await Promise.all([loadData(), loadStorageStats()]);
     state.editingId = state.data.people[0]?.id || "";
     renderAdminPanel();
     toast("Đã xóa.");
@@ -1710,6 +1763,7 @@ function importJson(event) {
     try {
       const data = JSON.parse(reader.result);
       state.data = await api("/api/import", { method: "POST", body: JSON.stringify(data) });
+      await loadStorageStats();
       state.editingId = state.data.people[0]?.id || "";
       renderAdminPanel();
       toast("Đã nhập JSON.");
@@ -1731,6 +1785,7 @@ function importCsv(event) {
         method: "POST",
         body: JSON.stringify({ familyName: state.data.familyName, people }),
       });
+      await loadStorageStats();
       state.editingId = state.data.people[0]?.id || "";
       renderAdminPanel();
       toast(`Đã nhập ${people.length} người từ CSV.`);
