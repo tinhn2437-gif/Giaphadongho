@@ -549,6 +549,82 @@ function buildLayout() {
       ...others,
     ];
   };
+  const packRowItems = (items) => {
+    const targeted = items
+      .filter((item) => item.target !== null)
+      .map((item) => ({ ...item, idealX: item.x }))
+      .sort((a, b) => a.idealX - b.idealX);
+    const loose = items.filter((item) => item.target === null);
+    const componentBounds = (component) => ({
+      min: Math.min(...component.map((item) => item.idealX)),
+      max: Math.max(...component.map((item) => item.idealX + item.width)),
+    });
+    const placeComponent = (component) => {
+      component.sort((a, b) => a.idealX - b.idealX);
+      const ideal = componentBounds(component);
+      const totalWidth = component.reduce((sum, item) => sum + item.width, 0) + GROUP_GAP * Math.max(0, component.length - 1);
+      let x = (ideal.min + ideal.max) / 2 - totalWidth / 2;
+      component.forEach((item) => {
+        item.x = x;
+        x += item.width + GROUP_GAP;
+      });
+      return {
+        min: component[0].x,
+        max: component[component.length - 1].x + component[component.length - 1].width,
+      };
+    };
+    let components = [];
+    targeted.forEach((item) => {
+      const last = components[components.length - 1];
+      if (!last) {
+        components.push([item]);
+        return;
+      }
+      const lastBounds = componentBounds(last);
+      if (item.idealX <= lastBounds.max + GROUP_GAP) last.push(item);
+      else components.push([item]);
+    });
+
+    let merged = true;
+    while (merged) {
+      merged = false;
+      const next = [];
+      components.forEach((component) => {
+        const bounds = placeComponent(component);
+        const previous = next[next.length - 1];
+        if (!previous) {
+          next.push(component);
+          return;
+        }
+        const previousBounds = placeComponent(previous);
+        if (bounds.min < previousBounds.max + GROUP_GAP) {
+          previous.push(...component);
+          merged = true;
+        } else {
+          next.push(component);
+        }
+      });
+      components = next;
+    }
+    components.forEach(placeComponent);
+
+    const packedTargeted = components.flat().sort((a, b) => a.x - b.x);
+    const rowStart = Math.min(...packedTargeted.map((item) => item.x), PADDING);
+    if (rowStart < PADDING) {
+      const delta = PADDING - rowStart;
+      packedTargeted.forEach((item) => { item.x += delta; });
+    }
+    let cursor = packedTargeted.length
+      ? Math.max(...packedTargeted.map((item) => item.x + item.width)) + GROUP_GAP
+      : PADDING;
+    loose
+      .sort((a, b) => (groupAnchor(a.groups[0])?.fullName || "").localeCompare(groupAnchor(b.groups[0])?.fullName || "", "vi"))
+      .forEach((item) => {
+        item.x = cursor;
+        cursor += item.width + GROUP_GAP;
+      });
+    return [...packedTargeted, ...loose].sort((a, b) => a.x - b.x);
+  };
 
   Array.from(generations.keys())
     .sort((a, b) => a - b)
@@ -600,16 +676,12 @@ function buildLayout() {
           return (groupAnchor(a)?.fullName || "").localeCompare(groupAnchor(b)?.fullName || "", "vi");
         });
         const totalWidth = band.groups.reduce((sum, group) => sum + groupWidth(group), 0) + GROUP_GAP * Math.max(0, band.groups.length - 1);
-        let x = band.target - totalWidth / 2;
-        band.groups.forEach((group) => {
-          rowItems.push({ group, x, width: groupWidth(group), target: band.target });
-          x += groupWidth(group) + GROUP_GAP;
-        });
+        rowItems.push({ groups: band.groups, x: band.target - totalWidth / 2, width: totalWidth, target: band.target });
       });
       looseGroups
         .sort((a, b) => (groupAnchor(a)?.fullName || "").localeCompare(groupAnchor(b)?.fullName || "", "vi"))
         .forEach((group) => {
-          rowItems.push({ group, x: 0, width: groupWidth(group), target: null });
+          rowItems.push({ groups: [group], x: 0, width: groupWidth(group), target: null });
         });
 
       rowItems.sort((a, b) => {
@@ -619,15 +691,13 @@ function buildLayout() {
         return a.x - b.x;
       });
 
-      let cursor = null;
-      rowItems.forEach((item) => {
-        if (cursor !== null && item.x < cursor + GROUP_GAP) item.x = cursor + GROUP_GAP;
-        cursor = item.x + item.width;
-      });
-
-      rowItems.forEach((item) => {
-        item.group.forEach((id, index) => {
-          positions.set(id, { x: item.x + index * (CARD_W + SPOUSE_GAP), y, w: CARD_W, h: CARD_H, gen });
+      packRowItems(rowItems).forEach((item) => {
+        let groupX = item.x;
+        item.groups.forEach((group) => {
+          group.forEach((id, index) => {
+            positions.set(id, { x: groupX + index * (CARD_W + SPOUSE_GAP), y, w: CARD_W, h: CARD_H, gen });
+          });
+          groupX += groupWidth(group) + GROUP_GAP;
         });
         maxX = Math.max(maxX, item.x + item.width);
         maxY = Math.max(maxY, y + CARD_H);
@@ -642,6 +712,55 @@ function buildLayout() {
     position.x += shiftX;
   });
   maxX += shiftX;
+  const groupBounds = (group) => {
+    const groupPositions = group.map((id) => positions.get(id)).filter(Boolean);
+    if (!groupPositions.length) return null;
+    return {
+      minX: Math.min(...groupPositions.map((position) => position.x)),
+      maxX: Math.max(...groupPositions.map((position) => position.x + position.w)),
+    };
+  };
+  const shiftGroup = (group, deltaX) => {
+    group.forEach((id) => {
+      const position = positions.get(id);
+      if (position) position.x += deltaX;
+    });
+  };
+  const firstGen = Math.min(...Array.from(groupsByGen.keys()));
+  const rootGroups = groupsByGen.get(firstGen) || [];
+  rootGroups.forEach((group) => {
+    const groupIdSet = new Set(group);
+    const childIds = new Set(people
+      .filter((person) => groupIdSet.has(person.fatherId) || groupIdSet.has(person.motherId))
+      .map((person) => person.id));
+    const childGroupBounds = (groupsByGen.get(firstGen + 1) || [])
+      .filter((childGroup) => childGroup.some((id) => childIds.has(id)))
+      .map(groupBounds)
+      .filter(Boolean);
+    if (!childGroupBounds.length) return;
+    const bounds = groupBounds(group);
+    if (!bounds) return;
+    const currentCenter = (bounds.minX + bounds.maxX) / 2;
+    const childCenter = (
+      Math.min(...childGroupBounds.map((item) => item.minX))
+      + Math.max(...childGroupBounds.map((item) => item.maxX))
+    ) / 2;
+    shiftGroup(group, childCenter - currentCenter);
+  });
+  rootGroups
+    .map((group) => ({ group, bounds: groupBounds(group) }))
+    .filter((item) => item.bounds)
+    .sort((a, b) => a.bounds.minX - b.bounds.minX)
+    .reduce((cursor, item) => {
+      if (item.bounds.minX < cursor) {
+        const delta = cursor - item.bounds.minX;
+        shiftGroup(item.group, delta);
+        item.bounds.minX += delta;
+        item.bounds.maxX += delta;
+      }
+      return item.bounds.maxX + GROUP_GAP;
+    }, PADDING);
+  maxX = Math.max(...Array.from(positions.values()).map((position) => position.x + position.w), PADDING);
   const contentBounds = Array.from(positions.values()).reduce((bounds, position) => ({
     minX: Math.min(bounds.minX, position.x),
     minY: Math.min(bounds.minY, position.y),
