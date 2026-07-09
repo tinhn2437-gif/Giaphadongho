@@ -603,7 +603,7 @@ function renderViewerAuth() {
       <main class="login-screen viewer-login-screen">
         <form class="login-panel viewer-login-panel" id="viewerAuthForm">
           <h2>Đăng nhập xem gia phả</h2>
-          <p class="notice">Tài khoản xem gia phả do admin tạo. Nếu chưa có tài khoản, hãy liên hệ người quản trị dòng họ.</p>
+          <p class="notice">Tài khoản xem gia phả do admin tạo. Để đăng nhập, hãy liên hệ cháu Nguyễn Văn Tình 0382967057 để lấy tài khoản và mật khẩu đăng nhập.</p>
           <div class="field"><label>Tài khoản</label><input name="username" autocomplete="username" required></div>
           <div class="field"><label>Mật khẩu</label><input name="password" type="password" autocomplete="current-password" required></div>
           <div class="form-actions">
