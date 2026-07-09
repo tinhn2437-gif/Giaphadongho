@@ -1444,13 +1444,73 @@ tr:hover td {
 }
 
 @media (max-width: 560px) {
+  body {
+    font-size: 14px;
+  }
+
+  .topbar {
+    min-height: 52px;
+    align-items: center;
+    flex-direction: row;
+    gap: 8px;
+    padding: 6px 8px;
+  }
+
+  .brand {
+    flex: 1 1 auto;
+    gap: 7px;
+    min-width: 0;
+  }
+
+  .brand-mark {
+    width: 28px;
+    height: 28px;
+    flex: 0 0 28px;
+    border-radius: 6px;
+    font-size: 14px;
+  }
+
+  .brand h1 {
+    display: -webkit-box;
+    overflow: hidden;
+    max-width: 42vw;
+    font-size: 15px;
+    line-height: 1.12;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+  }
+
+  .nav-actions {
+    flex: 0 0 auto;
+    gap: 5px;
+    justify-content: flex-end;
+  }
+
+  .nav-actions .btn,
+  .nav-actions .ghost-btn {
+    min-height: 30px;
+    padding: 6px 8px;
+    border-radius: 7px;
+    font-size: 13px;
+    line-height: 1;
+  }
+
   .workspace {
     padding: 8px;
   }
 
   .tree-viewport {
-    height: calc(100dvh - 96px);
+    height: calc(100dvh - 72px);
     min-height: 520px;
+  }
+
+  .floating-tools {
+    top: 62px;
+    right: 8px;
+  }
+
+  .detail-drawer {
+    top: 62px;
   }
 
   .menu-panel {
