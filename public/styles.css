@@ -1504,6 +1504,10 @@ tr:hover td {
     min-height: 520px;
   }
 
+  .pan-pad {
+    display: none;
+  }
+
   .floating-tools {
     top: 62px;
     right: 8px;
