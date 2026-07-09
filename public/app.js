@@ -10,6 +10,10 @@ const state = {
   pan: { x: 60, y: 40 },
   isAdmin: location.pathname === "/admin",
   authenticated: false,
+  viewerAuthenticated: false,
+  viewerUser: null,
+  viewerAuthMode: "login",
+  menuOpen: false,
   editingId: "",
   adminQuery: "",
   staticMode: false,
@@ -69,6 +73,27 @@ async function loadData() {
     state.isAdmin = false;
   }
   if (!state.editingId && state.data.people[0]) state.editingId = state.data.people[0].id;
+}
+
+function staticViewerUser() {
+  try {
+    return JSON.parse(localStorage.getItem("family_viewer_user") || "null");
+  } catch (error) {
+    return null;
+  }
+}
+
+async function loadViewerSession() {
+  try {
+    const session = await api("/api/viewer-session");
+    state.staticMode = false;
+    state.viewerAuthenticated = !!session.authenticated;
+    state.viewerUser = session.user || null;
+  } catch (error) {
+    state.staticMode = true;
+    state.viewerUser = staticViewerUser();
+    state.viewerAuthenticated = !!state.viewerUser;
+  }
 }
 
 function personById(id) {
@@ -151,6 +176,7 @@ function icon(name) {
     alive: '<path d="M20 6 9 17l-5-5"></path><circle cx="12" cy="12" r="10"></circle>',
     deceased: '<circle cx="12" cy="12" r="10"></circle><path d="M8 8l8 8"></path><path d="M16 8l-8 8"></path>',
     order: '<path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h.01"></path><path d="M3 12h.01"></path><path d="M3 18h.01"></path>',
+    menu: '<path d="M4 6h16"></path><path d="M4 12h16"></path><path d="M4 18h16"></path>',
   };
   return `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || ""}</svg>`;
 }
@@ -501,30 +527,7 @@ function renderPublic() {
     <div class="app-shell">
       ${topbar(false)}
       <main class="workspace">
-        <section class="toolbar">
-          <label class="searchbar">
-            <span class="search-icon" title="Tìm kiếm">${icon("search")}</span>
-            <input id="searchInput" value="${esc(state.query)}" placeholder="Tìm theo tên, địa chỉ, nghề nghiệp, thành tích...">
-          </label>
-          <div class="toolbar-actions">
-            <div class="segmented">
-              <button class="icon-btn ${state.view === "tree" ? "active" : ""}" data-view="tree" title="Sơ đồ" aria-label="Sơ đồ">${icon("tree")}</button>
-              <button class="icon-btn ${state.view === "list" ? "active" : ""}" data-view="list" title="Danh sách" aria-label="Danh sách">${icon("list")}</button>
-            </div>
-            <div class="zoom-controls">
-              <button class="icon-btn" data-zoom="out" title="Thu nhỏ" aria-label="Thu nhỏ">${icon("minus")}</button>
-              <button class="icon-btn" data-zoom="fit" title="Vừa khung" aria-label="Vừa khung">${icon("fit")}</button>
-              <button class="icon-btn" data-zoom="in" title="Phóng to" aria-label="Phóng to">${icon("plus")}</button>
-            </div>
-          </div>
-        </section>
-        <section class="mobile-help">Kéo để di chuyển, chụm hai ngón để thu phóng, hoặc dùng nút mũi tên.</section>
-        <section class="summary-strip">
-          <div class="stat"><strong>${stats.people}</strong><span>Người trong gia phả</span></div>
-          <div class="stat"><strong>${stats.childCount}</strong><span>Có thông tin bố/mẹ</span></div>
-          <div class="stat"><strong>${stats.marriedCount}</strong><span>Có quan hệ vợ/chồng</span></div>
-          <div class="stat"><strong>${stats.achievementCount}</strong><span>Có thành tích cấp huyện trở lên</span></div>
-        </section>
+        ${renderControlMenu(stats)}
         ${state.view === "tree" ? renderTree() : renderList()}
       </main>
       ${state.selectedId ? renderDetail(state.selectedId) : ""}
@@ -536,19 +539,89 @@ function renderPublic() {
   applyTransform();
 }
 
+function renderViewerAuth() {
+  const isRegister = state.viewerAuthMode === "register";
+  app.innerHTML = `
+    <div class="app-shell">
+      ${topbar(false)}
+      <main class="login-screen viewer-login-screen">
+        <form class="login-panel viewer-login-panel" id="viewerAuthForm">
+          <h2>${isRegister ? "Đăng ký xem gia phả" : "Đăng nhập xem gia phả"}</h2>
+          <p class="notice">${state.staticMode ? "Bản GitHub Pages chỉ khóa giao diện trên trình duyệt. Muốn bảo mật thật cần chạy bản server online." : "Đăng nhập để xem thông tin gia phả dòng họ."}</p>
+          ${isRegister ? `<div class="field"><label>Họ tên hiển thị</label><input name="displayName" autocomplete="name"></div>` : ""}
+          <div class="field"><label>Tài khoản</label><input name="username" autocomplete="username" required></div>
+          <div class="field"><label>Mật khẩu</label><input name="password" type="password" autocomplete="${isRegister ? "new-password" : "current-password"}" required></div>
+          <div class="form-actions">
+            <button class="btn" type="submit">${isRegister ? "Đăng ký" : "Đăng nhập"}</button>
+            <button class="ghost-btn" id="switchViewerAuth" type="button">${isRegister ? "Đã có tài khoản" : "Tạo tài khoản"}</button>
+          </div>
+        </form>
+        <div id="toastRoot"></div>
+      </main>
+    </div>
+  `;
+  $("#viewerAuthForm").addEventListener("submit", handleViewerAuth);
+  $("#switchViewerAuth").addEventListener("click", () => {
+    state.viewerAuthMode = isRegister ? "login" : "register";
+    renderViewerAuth();
+  });
+}
+
+function renderControlMenu(stats) {
+  return `
+    <section class="floating-tools ${state.menuOpen ? "open" : ""}">
+      <button class="menu-toggle" id="menuToggle" type="button" title="Công cụ" aria-label="Công cụ">${icon("menu")}</button>
+      <div class="menu-panel">
+        <div class="menu-section">
+          <h3>Tìm kiếm</h3>
+          <label class="searchbar compact-search">
+            <span class="search-icon" title="Tìm kiếm">${icon("search")}</span>
+            <input id="searchInput" value="${esc(state.query)}" placeholder="Tên, địa chỉ, nghề nghiệp...">
+          </label>
+        </div>
+        <div class="menu-section">
+          <h3>Kiểu xem</h3>
+          <div class="segmented">
+            <button class="icon-btn ${state.view === "tree" ? "active" : ""}" data-view="tree" title="Sơ đồ" aria-label="Sơ đồ">${icon("tree")}</button>
+            <button class="icon-btn ${state.view === "list" ? "active" : ""}" data-view="list" title="Danh sách" aria-label="Danh sách">${icon("list")}</button>
+          </div>
+        </div>
+        <div class="menu-section">
+          <h3>Thu phóng</h3>
+          <div class="zoom-controls">
+            <button class="icon-btn" data-zoom="out" title="Thu nhỏ" aria-label="Thu nhỏ">${icon("minus")}</button>
+            <button class="icon-btn" data-zoom="fit" title="Vừa khung" aria-label="Vừa khung">${icon("fit")}</button>
+            <button class="icon-btn" data-zoom="in" title="Phóng to" aria-label="Phóng to">${icon("plus")}</button>
+          </div>
+        </div>
+        <div class="menu-section stats-menu">
+          <h3>Thông tin</h3>
+          <div><strong>${stats.people}</strong><span>Người trong gia phả</span></div>
+          <div><strong>${stats.childCount}</strong><span>Có thông tin bố/mẹ</span></div>
+          <div><strong>${stats.marriedCount}</strong><span>Có quan hệ vợ/chồng</span></div>
+          <div><strong>${stats.achievementCount}</strong><span>Có thành tích cấp huyện trở lên</span></div>
+        </div>
+        <div class="menu-section menu-help">Kéo để di chuyển, chụm hai ngón để thu phóng, hoặc dùng nút mũi tên.</div>
+      </div>
+    </section>
+  `;
+}
+
 function topbar(admin) {
+  const viewerName = state.viewerUser?.displayName || state.viewerUser?.username || "";
   return `
     <header class="topbar">
       <a class="brand" href="${state.staticMode ? "./" : "/"}">
         <div class="brand-mark">NH</div>
         <div>
           <h1>${esc(state.data.familyName || "Gia phả dòng họ Nguyễn Hữu")}</h1>
-          <p>${admin ? "Khu vực quản trị thông tin gia phả" : "Trang xem công khai cho mọi người có link"}</p>
+          <p>${admin ? "Khu vực quản trị thông tin gia phả" : viewerName ? `Xin chào ${esc(viewerName)}` : "Đăng nhập để xem gia phả"}</p>
         </div>
       </a>
       <nav class="nav-actions">
         <a class="ghost-btn" href="${state.staticMode ? "./" : "/"}">Trang xem</a>
         ${state.staticMode ? "" : `<a class="btn" href="/admin">Admin</a>`}
+        ${!admin && state.viewerAuthenticated ? `<button class="ghost-btn" id="viewerLogoutBtn" type="button">Đăng xuất</button>` : ""}
         ${admin && state.authenticated ? `<button class="ghost-btn" id="logoutBtn">Đăng xuất</button>` : ""}
       </nav>
     </header>
@@ -803,13 +876,20 @@ function cleanGallery(value) {
 }
 
 function bindPublic() {
+  $("#menuToggle")?.addEventListener("click", () => {
+    state.menuOpen = !state.menuOpen;
+    renderPublic();
+  });
+  $("#viewerLogoutBtn")?.addEventListener("click", logoutViewer);
   $("#searchInput")?.addEventListener("input", (event) => {
     state.query = event.target.value;
+    state.menuOpen = true;
     renderPublic();
   });
   $$(".segmented button").forEach((button) => {
     button.addEventListener("click", () => {
       state.view = button.dataset.view;
+      state.menuOpen = false;
       renderPublic();
     });
   });
@@ -822,6 +902,7 @@ function bindPublic() {
         state.scale = 0.72;
         state.pan = { x: 40, y: 28 };
       }
+      state.menuOpen = true;
       applyTransform();
     });
   });
@@ -865,6 +946,54 @@ function bindPublic() {
   $("#closePhotoViewer")?.addEventListener("click", closePhotoViewer);
   $("#closePhotoViewerBtn")?.addEventListener("click", closePhotoViewer);
   bindPan();
+}
+
+async function handleViewerAuth(event) {
+  event.preventDefault();
+  const form = new FormData(event.currentTarget);
+  const username = String(form.get("username") || "").trim();
+  const password = String(form.get("password") || "").trim();
+  const displayName = String(form.get("displayName") || "").trim();
+  try {
+    if (state.staticMode) {
+      const accounts = JSON.parse(localStorage.getItem("family_viewer_accounts") || "{}");
+      if (state.viewerAuthMode === "register") {
+        if (username.length < 3 || password.length < 6) throw new Error("Tài khoản cần từ 3 ký tự, mật khẩu từ 6 ký tự.");
+        if (accounts[username]) throw new Error("Tài khoản này đã tồn tại.");
+        accounts[username] = { username, displayName: displayName || username, password };
+        localStorage.setItem("family_viewer_accounts", JSON.stringify(accounts));
+      } else if (!accounts[username] || accounts[username].password !== password) {
+        throw new Error("Sai tài khoản hoặc mật khẩu.");
+      }
+      state.viewerUser = { username, displayName: accounts[username]?.displayName || displayName || username };
+      localStorage.setItem("family_viewer_user", JSON.stringify(state.viewerUser));
+    } else {
+      const path = state.viewerAuthMode === "register" ? "/api/register" : "/api/view-login";
+      const result = await api(path, {
+        method: "POST",
+        body: JSON.stringify({ username, password, displayName }),
+      });
+      state.viewerUser = result.user || { username, displayName };
+    }
+    state.viewerAuthenticated = true;
+    await loadData();
+    renderPublic();
+  } catch (error) {
+    toast(error.message);
+  }
+}
+
+async function logoutViewer() {
+  try {
+    if (!state.staticMode) await api("/api/view-logout", { method: "POST", body: "{}" });
+  } catch (error) {
+    // Logging out should still clear the local UI even if the request fails.
+  }
+  localStorage.removeItem("family_viewer_user");
+  state.viewerAuthenticated = false;
+  state.viewerUser = null;
+  state.data = { familyName: state.data.familyName, people: [] };
+  renderViewerAuth();
 }
 
 function closePhotoViewer() {
@@ -998,6 +1127,7 @@ async function renderAdmin() {
     $("#loginForm").addEventListener("submit", login);
     return;
   }
+  await loadData();
   renderAdminPanel();
 }
 
@@ -1422,9 +1552,17 @@ function toast(message) {
 
 async function start() {
   try {
+    if (state.isAdmin) {
+      await renderAdmin();
+      return;
+    }
+    await loadViewerSession();
+    if (!state.viewerAuthenticated) {
+      renderViewerAuth();
+      return;
+    }
     await loadData();
-    if (state.isAdmin) await renderAdmin();
-    else renderPublic();
+    renderPublic();
   } catch (error) {
     app.innerHTML = `<div class="empty-state">Không tải được dữ liệu: ${esc(error.message)}</div>`;
   }

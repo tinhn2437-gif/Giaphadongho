@@ -17,6 +17,8 @@ Tai khoan mac dinh:
 - Tai khoan: `admin`
 - Mat khau: `admin123`
 
+Trang xem co dang ky/dang nhap rieng cho nguoi xem. Tai khoan nguoi xem duoc luu trong `data/users.json` va file nay khong dua len Git.
+
 Khi dua len may chu that, hay doi bang bien moi truong:
 
 ```powershell
@@ -26,12 +28,39 @@ $env:FAMILY_SECRET="chuoi_bi_mat_dai"
 python server.py
 ```
 
+Neu muon tam thoi tat dang nhap trang xem khi chay server:
+
+```powershell
+$env:FAMILY_REQUIRE_VIEW_LOGIN="0"
+python server.py
+```
+
 ## Du lieu
 
 - File chinh: `data/family.json`
 - Anh ca nhan: `uploads/photos`
+- Tai khoan nguoi xem: `data/users.json`
 
 Co the sao luu ca thu muc `web-gia-pha` de giu toan bo web, du lieu va anh.
+
+## Luu anh len Cloudflare R2
+
+Web van luu anh local vao `uploads/photos`. Neu cau hinh Cloudflare R2, khi admin upload anh web se day them anh len R2 va luu link public R2 vao gia pha.
+
+Theo tai lieu Cloudflare R2, R2 ho tro S3-compatible API va endpoint co dang `https://<ACCOUNT_ID>.r2.cloudflarestorage.com`. Bucket muon hien anh tren web can co public URL/custom domain.
+
+Dat cac bien moi truong truoc khi chay server:
+
+```powershell
+$env:R2_ACCOUNT_ID="account_id_cloudflare"
+$env:R2_ACCESS_KEY_ID="access_key_id"
+$env:R2_SECRET_ACCESS_KEY="secret_access_key"
+$env:R2_BUCKET="ten_bucket"
+$env:R2_PUBLIC_URL="https://ten-public-domain-hoac-r2-dev"
+python server.py
+```
+
+Neu chua dien cac bien nay, upload anh van hoat dong bang luu local nhu cu.
 
 ## Tao ban public de dua len hosting mien phi
 
@@ -62,7 +91,7 @@ git commit -m "Update family tree"
 git push origin main
 ```
 
-Luu y: GitHub Pages la ban public static, ai co link thi xem duoc. Neu muon bat dang nhap that su khi may tinh tat, can mot backend online nhu Cloudflare Workers/Pages Functions kem database.
+Luu y: GitHub Pages la ban public static. Nut dang ky/dang nhap tren ban static chi khoa giao dien trong trinh duyet, khong bao mat that su vi file `family.json` van la file tinh. Neu muon bat dang nhap that su khi may tinh tat, can mot backend online nhu Cloudflare Workers/Pages Functions kem database.
 
 ## Nhap CSV hang loat
 
