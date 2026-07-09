@@ -912,6 +912,7 @@ function bindPublic() {
   $$(".person-card, tbody tr, .inline-person").forEach((item) => {
     item.addEventListener("click", () => {
       state.selectedId = item.dataset.personId;
+      state.menuOpen = false;
       renderPublic();
     });
     item.addEventListener("keydown", (event) => {
@@ -927,6 +928,7 @@ function bindPublic() {
       state.photoPersonId = button.dataset.photoPersonId;
       state.photoUrl = "";
       state.photoTitle = "";
+      state.menuOpen = false;
       renderPublic();
     });
   });
@@ -936,6 +938,7 @@ function bindPublic() {
       state.photoPersonId = "";
       state.photoUrl = button.dataset.photoUrl;
       state.photoTitle = button.dataset.photoTitle;
+      state.menuOpen = false;
       renderPublic();
     });
   });
