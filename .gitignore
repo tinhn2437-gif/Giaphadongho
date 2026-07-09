@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.env
+
+logs/
+tools/
+deploy-public/
+deploy-public.zip
+
+data/users.json
+data/*.tmp
