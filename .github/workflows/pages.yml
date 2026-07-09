@@ -27,6 +27,9 @@ jobs:
         with:
           python-version: "3.x"
 
+      - name: Configure Pages
+        uses: actions/configure-pages@v5
+
       - name: Export public site
         run: python export_static.py
 
