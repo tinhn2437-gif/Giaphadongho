@@ -472,10 +472,10 @@ a {
 
 .person-card {
   position: absolute;
-  width: 218px;
-  height: 128px;
+  width: var(--card-w, 218px);
+  height: var(--card-h, 128px);
   display: grid;
-  grid-template-columns: 58px 1fr;
+  grid-template-columns: var(--photo-w, 58px) 1fr;
   gap: 11px;
   align-items: center;
   padding: 10px;
@@ -501,8 +501,8 @@ a {
 
 .person-photo,
 .avatar-fallback {
-  width: 58px;
-  height: 72px;
+  width: var(--photo-w, 58px);
+  height: var(--photo-h, 72px);
   border-radius: 8px;
   object-fit: cover;
   background: var(--panel-2);

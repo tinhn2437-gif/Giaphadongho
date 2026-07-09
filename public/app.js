@@ -416,11 +416,13 @@ function buildLayout() {
     generations.get(gen).push(person);
   });
 
-  const CARD_W = 218;
-  const CARD_H = 128;
-  const SPOUSE_GAP = 16;
-  const GROUP_GAP = 62;
-  const ROW_GAP = 188;
+  const CARD_W = people.length > 500 ? 178 : people.length > 220 ? 194 : 218;
+  const CARD_H = people.length > 500 ? 116 : people.length > 220 ? 120 : 128;
+  const PHOTO_W = people.length > 500 ? 48 : people.length > 220 ? 52 : 58;
+  const PHOTO_H = people.length > 500 ? 60 : people.length > 220 ? 66 : 72;
+  const SPOUSE_GAP = people.length > 500 ? 10 : people.length > 220 ? 12 : 16;
+  const GROUP_GAP = people.length > 500 ? 50 : people.length > 220 ? 56 : 62;
+  const BASE_ROW_GAP = people.length > 500 ? 170 : people.length > 220 ? 180 : 188;
   const PADDING = 80;
   const positions = new Map();
   const groupsByGen = new Map();
@@ -429,6 +431,48 @@ function buildLayout() {
 
   const groupWidth = (group) => group.length * CARD_W + (group.length - 1) * SPOUSE_GAP;
   const parentKeyOf = (person) => person && (person.fatherId || person.motherId) ? `${person.fatherId || "_"}|${person.motherId || "_"}` : "";
+  const parentGenerationOf = (person) => {
+    const parentGenerations = [person?.fatherId, person?.motherId]
+      .map((id) => generation.get(id))
+      .filter((item) => Number.isFinite(item));
+    return parentGenerations.length ? Math.max(...parentGenerations) : null;
+  };
+  const relationPressure = new Map();
+  people.forEach((person) => {
+    const parentGen = parentGenerationOf(person);
+    const childGen = generation.get(person.id);
+    const key = parentKeyOf(person);
+    if (parentGen === null || !key || !Number.isFinite(childGen) || childGen <= parentGen) return;
+    if (!relationPressure.has(parentGen)) relationPressure.set(parentGen, new Map());
+    const relations = relationPressure.get(parentGen);
+    if (!relations.has(key)) relations.set(key, 0);
+    relations.set(key, relations.get(key) + 1);
+  });
+  const rowGapAfter = new Map();
+  relationPressure.forEach((relations, gen) => {
+    const relationCount = relations.size;
+    const maxChildren = Math.max(...Array.from(relations.values()), 1);
+    const extraForRelations = Math.max(0, relationCount - 2) * 18;
+    const extraForChildren = Math.max(0, maxChildren - 3) * 8;
+    rowGapAfter.set(gen, BASE_ROW_GAP + Math.min(260, extraForRelations + extraForChildren));
+  });
+  const yForGeneration = new Map();
+  Array.from(generations.keys())
+    .sort((a, b) => a - b)
+    .forEach((gen, index, orderedGens) => {
+      if (index === 0) {
+        yForGeneration.set(gen, PADDING);
+        return;
+      }
+      const previousGen = orderedGens[index - 1];
+      const previousY = yForGeneration.get(previousGen);
+      const missingSteps = Math.max(1, gen - previousGen);
+      let y = previousY + CARD_H;
+      for (let step = 0; step < missingSteps; step++) {
+        y += rowGapAfter.get(previousGen + step) || BASE_ROW_GAP;
+      }
+      yForGeneration.set(gen, y);
+    });
   const groupAnchor = (group) => {
     const members = group.map((id) => byId.get(id)).filter(Boolean);
     return members.find((person) => person.familyRole !== "Con dâu" && parentKeyOf(person))
@@ -524,7 +568,7 @@ function buildLayout() {
           groups.push(spouseGroupOrder(groupIds));
         });
 
-      const y = PADDING + gen * (CARD_H + ROW_GAP);
+      const y = yForGeneration.get(gen) ?? PADDING;
       const parentBands = new Map();
       const looseGroups = [];
       groups.forEach((group) => {
@@ -590,7 +634,18 @@ function buildLayout() {
   });
   maxX += shiftX;
 
-  return { byId, children, positions, groupsByGen, width: Math.max(maxX + PADDING, 900), height: Math.max(maxY + PADDING, 600) };
+  return {
+    byId,
+    children,
+    positions,
+    groupsByGen,
+    cardW: CARD_W,
+    cardH: CARD_H,
+    photoW: PHOTO_W,
+    photoH: PHOTO_H,
+    width: Math.max(maxX + PADDING, 900),
+    height: Math.max(maxY + PADDING, 600),
+  };
 }
 
 function renderPublic() {
@@ -813,7 +868,11 @@ function renderTree() {
     edgeGroups.get(groupKey).childXs.push(childX);
   });
 
-  const edges = routeTreeEdgeGroups(Array.from(edgeGroups.values())).flatMap((group) => {
+  const routedEdgeGroups = routeTreeEdgeGroups(Array.from(edgeGroups.values()));
+  const edgeMaxY = routedEdgeGroups.reduce((max, group) => Math.max(max, group.midY || 0, group.childY || 0, group.parentY || 0), 0);
+  layout.height = Math.max(layout.height, edgeMaxY + 96);
+
+  const edges = routedEdgeGroups.flatMap((group) => {
     const childXs = [...new Set(group.childXs)].sort((a, b) => a - b);
     const branchStart = Math.min(group.parentX, ...childXs);
     const branchEnd = Math.max(group.parentX, ...childXs);
@@ -851,7 +910,7 @@ function renderTree() {
 
   return `
     <section class="tree-viewport" id="treeViewport">
-      <div class="tree-canvas" id="treeCanvas" style="width:${layout.width}px;height:${layout.height}px">
+      <div class="tree-canvas" id="treeCanvas" style="width:${layout.width}px;height:${layout.height}px;--card-w:${layout.cardW}px;--card-h:${layout.cardH}px;--photo-w:${layout.photoW}px;--photo-h:${layout.photoH}px">
         <svg class="tree-lines" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}">
           <defs>
             <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
