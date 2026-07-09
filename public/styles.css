@@ -447,12 +447,21 @@ a {
   font-weight: 700;
 }
 
-.edge {
+.edge,
+.edge-halo {
   fill: none;
-  stroke: #6d8179;
-  stroke-width: 2;
   stroke-linecap: round;
   stroke-linejoin: round;
+}
+
+.edge-halo {
+  stroke: rgba(255, 248, 211, 0.92);
+  stroke-width: 7;
+}
+
+.edge {
+  stroke: #6d8179;
+  stroke-width: 2;
 }
 
 .spouse-line {
