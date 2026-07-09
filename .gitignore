@@ -9,3 +9,8 @@ deploy-public.zip
 
 data/users.json
 data/*.tmp
+
+node_modules/
+.wrangler/
+.wrangler-cache/
+cloudflare-seed.sql

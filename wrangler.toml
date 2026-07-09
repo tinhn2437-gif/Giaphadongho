@@ -1,0 +1,8 @@
+name = "giaphadongho"
+compatibility_date = "2026-07-09"
+pages_build_output_dir = "deploy-public"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "giapha-nguyenhuu-db"
+database_id = "828d7295-dc09-441f-b0c8-3468eb055b0c"

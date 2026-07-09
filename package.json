@@ -1,0 +1,1 @@
+{"scripts":{"deploy":"wrangler pages deploy deploy-public --project-name giaphadongho"},"devDependencies":{"wrangler":"^4.107.1"}}
