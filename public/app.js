@@ -1028,6 +1028,7 @@ function rangesOverlap(a, b, gap = 0) {
 function routeTreeEdgeGroups(edges) {
   const HORIZONTAL_GAP = 22;
   const LANE_GAP = 16;
+  const CROSS_GAP = 5;
   const groups = new Map();
 
   edges.forEach((edge) => {
@@ -1060,8 +1061,58 @@ function routeTreeEdgeGroups(edges) {
     bands.get(key).push(group);
   });
 
+  const routedHorizontals = [];
+  const routedVerticals = [];
+  const between = (value, a, b, gap = 0) => value >= Math.min(a, b) - gap && value <= Math.max(a, b) + gap;
+  const inSpan = (value, span, gap = 0) => value >= span.start - gap && value <= span.end + gap;
+  const verticalSegmentsFor = (group, midY) => [
+    { x: group.parentX, startY: group.parentY, endY: midY, group },
+    ...group.childXs.map((childX) => ({ x: childX, startY: midY, endY: group.childY - 8, group })),
+  ];
+  const candidateYs = (top, bottom) => {
+    if (bottom <= top) return [Math.round(top)];
+    const values = [];
+    const center = top + (bottom - top) / 2;
+    const add = (value) => {
+      const rounded = Math.round(value * 10) / 10;
+      if (rounded < top || rounded > bottom || values.includes(rounded)) return;
+      values.push(rounded);
+    };
+    add(center);
+    for (let offset = LANE_GAP; offset <= bottom - top + LANE_GAP; offset += LANE_GAP) {
+      add(center - offset);
+      add(center + offset);
+    }
+    for (let y = top; y <= bottom; y += LANE_GAP) add(y);
+    add(bottom);
+    return values;
+  };
+  const conflictScore = (group, midY) => {
+    const span = group.span;
+    const verticals = verticalSegmentsFor(group, midY);
+    let score = 0;
+    routedHorizontals.forEach((line) => {
+      if (Math.abs(line.y - midY) < LANE_GAP && rangesOverlap(line, span, HORIZONTAL_GAP)) score += 1200;
+      verticals.forEach((vertical) => {
+        if (inSpan(vertical.x, line, CROSS_GAP) && between(line.y, vertical.startY, vertical.endY, CROSS_GAP)) score += 500;
+      });
+    });
+    routedVerticals.forEach((line) => {
+      if (inSpan(line.x, span, CROSS_GAP) && between(midY, line.startY, line.endY, CROSS_GAP)) score += 500;
+      verticals.forEach((vertical) => {
+        if (Math.abs(vertical.x - line.x) < CROSS_GAP && rangesOverlap(
+          { start: Math.min(vertical.startY, vertical.endY), end: Math.max(vertical.startY, vertical.endY) },
+          { start: Math.min(line.startY, line.endY), end: Math.max(line.startY, line.endY) },
+          CROSS_GAP,
+        )) score += 260;
+      });
+    });
+    return score;
+  };
+
   bands.forEach((bandGroups) => {
-    const lanes = [];
+    const top = Math.min(...bandGroups.map((group) => group.parentY)) + 26;
+    const bottom = Math.max(...bandGroups.map((group) => group.childY)) - 44;
     bandGroups
       .sort((a, b) => {
         const widthDiff = (b.span.end - b.span.start) - (a.span.end - a.span.start);
@@ -1069,27 +1120,14 @@ function routeTreeEdgeGroups(edges) {
         return a.span.start - b.span.start;
       })
       .forEach((group) => {
-        let laneIndex = lanes.findIndex((lane) => lane.every((item) => !rangesOverlap(item.span, group.span, HORIZONTAL_GAP)));
-        if (laneIndex < 0) {
-          laneIndex = lanes.length;
-          lanes.push([]);
-        }
-        lanes[laneIndex].push(group);
-        group.lane = laneIndex;
+        const candidates = candidateYs(top, bottom);
+        const best = candidates
+          .map((midY) => ({ midY, score: conflictScore(group, midY), distance: Math.abs(midY - (top + bottom) / 2) }))
+          .sort((a, b) => a.score - b.score || a.distance - b.distance)[0];
+        group.midY = best?.midY ?? Math.round((top + bottom) / 2);
+        routedHorizontals.push({ ...group.span, y: group.midY, group });
+        routedVerticals.push(...verticalSegmentsFor(group, group.midY));
       });
-
-    const top = Math.min(...bandGroups.map((group) => group.parentY)) + 26;
-    const bottom = Math.max(...bandGroups.map((group) => group.childY)) - 44;
-    const available = Math.max(0, bottom - top);
-    const step = lanes.length > 1
-      ? Math.max(9, Math.min(LANE_GAP, available / (lanes.length - 1 || 1)))
-      : 0;
-    const firstY = available > 0
-      ? top + Math.max(8, (available - step * Math.max(0, lanes.length - 1)) / 2)
-      : Math.min(...bandGroups.map((group) => group.parentY)) + 48;
-    bandGroups.forEach((group) => {
-      group.midY = Math.round((firstY + group.lane * step) * 10) / 10;
-    });
   });
 
   return routed;
