@@ -849,8 +849,10 @@ function buildLayout() {
       }
     });
   };
-  alignLowerRelations();
-  resolveLowerCollisions();
+  for (let pass = 0; pass < 4; pass++) {
+    alignLowerRelations();
+    resolveLowerCollisions();
+  }
   const finalMinX = Math.min(...Array.from(positions.values()).map((position) => position.x), PADDING);
   if (finalMinX < PADDING) {
     const delta = PADDING - finalMinX;
@@ -1109,10 +1111,50 @@ function routeTreeEdgeGroups(edges) {
     });
     return score;
   };
+  const groupHorizontal = (group, midY = group.midY) => ({ ...group.span, y: midY, group });
+  const globalConflictScore = (group, midY) => {
+    const horizontal = groupHorizontal(group, midY);
+    const verticals = verticalSegmentsFor(group, midY);
+    const ideal = group.routeTop + (group.routeBottom - group.routeTop) / 2;
+    let score = Math.abs(midY - ideal) * 0.2;
+
+    routed.forEach((other) => {
+      if (other === group || !Number.isFinite(other.midY)) return;
+      const otherHorizontal = groupHorizontal(other);
+      const otherVerticals = verticalSegmentsFor(other, other.midY);
+      if (Math.abs(otherHorizontal.y - horizontal.y) < LANE_GAP && rangesOverlap(otherHorizontal, horizontal, HORIZONTAL_GAP)) {
+        score += 1600;
+      }
+      otherVerticals.forEach((vertical) => {
+        if (inSpan(vertical.x, horizontal, CROSS_GAP) && between(horizontal.y, vertical.startY, vertical.endY, CROSS_GAP)) {
+          score += 1200;
+        }
+      });
+      verticals.forEach((vertical) => {
+        if (inSpan(vertical.x, otherHorizontal, CROSS_GAP) && between(otherHorizontal.y, vertical.startY, vertical.endY, CROSS_GAP)) {
+          score += 1200;
+        }
+        otherVerticals.forEach((otherVertical) => {
+          if (Math.abs(vertical.x - otherVertical.x) < CROSS_GAP && rangesOverlap(
+            { start: Math.min(vertical.startY, vertical.endY), end: Math.max(vertical.startY, vertical.endY) },
+            { start: Math.min(otherVertical.startY, otherVertical.endY), end: Math.max(otherVertical.startY, otherVertical.endY) },
+            CROSS_GAP,
+          )) {
+            score += 360;
+          }
+        });
+      });
+    });
+    return score;
+  };
 
   bands.forEach((bandGroups) => {
     const top = Math.min(...bandGroups.map((group) => group.parentY)) + 26;
     const bottom = Math.max(...bandGroups.map((group) => group.childY)) - 44;
+    bandGroups.forEach((group) => {
+      group.routeTop = top;
+      group.routeBottom = bottom;
+    });
     bandGroups
       .sort((a, b) => {
         const widthDiff = (b.span.end - b.span.start) - (a.span.end - a.span.start);
@@ -1129,6 +1171,28 @@ function routeTreeEdgeGroups(edges) {
         routedVerticals.push(...verticalSegmentsFor(group, group.midY));
       });
   });
+
+  for (let pass = 0; pass < 8; pass++) {
+    let changed = false;
+    routed
+      .slice()
+      .sort((a, b) => (b.span.end - b.span.start) - (a.span.end - a.span.start))
+      .forEach((group) => {
+        const candidates = candidateYs(group.routeTop, group.routeBottom);
+        const best = candidates
+          .map((midY) => ({
+            midY,
+            score: globalConflictScore(group, midY),
+            distance: Math.abs(midY - (group.routeTop + group.routeBottom) / 2),
+          }))
+          .sort((a, b) => a.score - b.score || a.distance - b.distance)[0];
+        if (best && Math.abs(best.midY - group.midY) > 0.5) {
+          group.midY = best.midY;
+          changed = true;
+        }
+      });
+    if (!changed) break;
+  }
 
   return routed;
 }
@@ -1189,10 +1253,35 @@ function renderTree() {
   layout.contentBounds.maxX = layout.axisX + balancedRadius;
   layout.width = Math.max(layout.width, layout.contentBounds.maxX + 80, 900);
 
+  const edgeVerticals = routedEdgeGroups.flatMap((group, groupIndex) => [
+    { groupIndex, x: group.parentX, startY: group.parentY, endY: group.midY },
+    ...group.childXs.map((childX) => ({ groupIndex, x: childX, startY: group.midY, endY: group.childY - 8 })),
+  ]);
+  const horizontalPathWithBreaks = (startX, endX, y, groupIndex) => {
+    const GAP = 13;
+    const points = edgeVerticals
+      .filter((segment) => segment.groupIndex !== groupIndex)
+      .filter((segment) => segment.x > startX + GAP && segment.x < endX - GAP)
+      .filter((segment) => y > Math.min(segment.startY, segment.endY) + 4 && y < Math.max(segment.startY, segment.endY) - 4)
+      .map((segment) => segment.x)
+      .sort((a, b) => a - b);
+    let cursor = startX;
+    const parts = [];
+    points.forEach((x) => {
+      const breakStart = Math.max(cursor, x - GAP);
+      const breakEnd = x + GAP;
+      if (breakStart - cursor > 1) parts.push(`M ${cursor} ${y} H ${breakStart}`);
+      cursor = Math.max(cursor, breakEnd);
+    });
+    if (endX - cursor > 1) parts.push(`M ${cursor} ${y} H ${endX}`);
+    return parts.join(" ");
+  };
+
   const edges = routedEdgeGroups.flatMap((group) => {
+    const groupIndex = routedEdgeGroups.indexOf(group);
     const branchStart = Math.min(group.parentX, ...group.childXs);
     const branchEnd = Math.max(group.parentX, ...group.childXs);
-    const trunkPath = `M ${group.parentX} ${group.parentY} V ${group.midY} M ${branchStart} ${group.midY} H ${branchEnd}`;
+    const trunkPath = `M ${group.parentX} ${group.parentY} V ${group.midY} ${horizontalPathWithBreaks(branchStart, branchEnd, group.midY, groupIndex)}`;
     const childPaths = group.childXs.map((childX) => `M ${childX} ${group.midY} V ${group.childY - 8}`);
     return [
       `<path class="edge-halo" d="${trunkPath}"></path>`,
