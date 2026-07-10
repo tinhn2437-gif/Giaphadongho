@@ -136,7 +136,38 @@ function normalizeText(value) {
   return String(value || "")
     .toLowerCase()
     .normalize("NFD")
-    .replace(/[\u0300-\u036f]/g, "");
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d");
+}
+
+function compactText(value) {
+  return normalizeText(value).replace(/[^a-z0-9]+/g, "");
+}
+
+function isSubsequence(needle, value) {
+  let index = 0;
+  for (const char of value) {
+    if (char === needle[index]) index += 1;
+    if (index >= needle.length) return true;
+  }
+  return !needle;
+}
+
+function smallEditDistance(a, b, limit = 2) {
+  if (Math.abs(a.length - b.length) > limit) return limit + 1;
+  let previous = Array.from({ length: b.length + 1 }, (_, index) => index);
+  for (let i = 1; i <= a.length; i++) {
+    const current = [i];
+    let rowMin = current[0];
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      current[j] = Math.min(previous[j] + 1, current[j - 1] + 1, previous[j - 1] + cost);
+      rowMin = Math.min(rowMin, current[j]);
+    }
+    if (rowMin > limit) return limit + 1;
+    previous = current;
+  }
+  return previous[b.length];
 }
 
 function esc(value) {
@@ -1596,25 +1627,57 @@ async function renderAdmin() {
   renderAdminPanel();
 }
 
+function adminSearchText(person) {
+  return [
+    person.fullName,
+    person.familyRole,
+    person.gender,
+    person.birthDate,
+    person.deathDate,
+    person.marriageYear,
+    person.job,
+    person.address,
+    person.hometown,
+    person.currentResidence,
+    person.daughterInLawFather,
+    person.daughterInLawMother,
+    person.daughterHusbandName,
+    person.daughterMarriedAddress,
+    person.daughterChildrenCount,
+  ].join(" ");
+}
+
+function adminSearchScore(person, query) {
+  const normalizedQuery = normalizeText(query).trim();
+  if (!normalizedQuery) return 1;
+  const text = normalizeText(adminSearchText(person));
+  const name = normalizeText(person.fullName);
+  const compactQuery = compactText(normalizedQuery);
+  const compactName = compactText(person.fullName);
+  const textWords = text.split(/[^a-z0-9]+/).filter(Boolean);
+  const nameWords = name.split(/[^a-z0-9]+/).filter(Boolean);
+  const queryWords = normalizedQuery.split(/[^a-z0-9]+/).filter(Boolean);
+
+  if (name === normalizedQuery) return 200;
+  if (name.includes(normalizedQuery)) return 180;
+  if (text.includes(normalizedQuery)) return 150;
+  if (compactQuery && compactName.includes(compactQuery)) return 135;
+  if (queryWords.length && queryWords.every((word) => textWords.some((textWord) => textWord.includes(word)))) return 115;
+  if (queryWords.length && queryWords.every((word, index) => nameWords[index]?.startsWith(word) || nameWords.some((nameWord) => nameWord.startsWith(word)))) return 105;
+  if (compactQuery && isSubsequence(compactQuery, compactName)) return 85;
+  if (queryWords.length && queryWords.every((word) => textWords.some((textWord) => smallEditDistance(word, textWord.slice(0, Math.max(word.length, 1))) <= 1))) return 72;
+  if (compactQuery.length >= 2 && textWords.some((word) => smallEditDistance(compactQuery, word) <= 2)) return 58;
+  return 0;
+}
+
 function renderAdminPanel() {
-  const people = state.data.people
-    .filter((person) => !state.adminQuery || normalizeText([
-      person.fullName,
-      person.familyRole,
-      person.birthDate,
-      person.deathDate,
-      person.marriageYear,
-      person.job,
-      person.address,
-      person.hometown,
-      person.currentResidence,
-      person.daughterInLawFather,
-      person.daughterInLawMother,
-      person.daughterHusbandName,
-      person.daughterMarriedAddress,
-      person.daughterChildrenCount,
-    ].join(" ")).includes(normalizeText(state.adminQuery)))
-    .sort((a, b) => a.fullName.localeCompare(b.fullName, "vi"));
+  const adminQuery = state.adminQuery.trim();
+  const scoredPeople = state.data.people
+    .map((person) => ({ person, score: adminSearchScore(person, adminQuery) }))
+    .filter((item) => !adminQuery || item.score > 0)
+    .sort((a, b) => (adminQuery ? b.score - a.score : 0) || a.person.fullName.localeCompare(b.person.fullName, "vi"));
+  const people = scoredPeople.map((item) => item.person);
+  const suggestions = adminQuery ? scoredPeople.slice(0, 7).map((item) => item.person) : [];
   const editing = personById(state.editingId) || { ...emptyPerson };
   app.innerHTML = `
     <div class="app-shell">
@@ -1624,7 +1687,17 @@ function renderAdminPanel() {
           <aside class="admin-panel admin-sidebar">
             <div class="panel-head">
               <h2>Danh sách ${state.data.people.length} người</h2>
-              <label class="searchbar"><span class="search-icon" title="Tìm kiếm">${icon("search")}</span><input id="adminSearch" value="${esc(state.adminQuery)}" placeholder="Tìm người để sửa"></label>
+              <label class="searchbar"><span class="search-icon" title="Tìm kiếm">${icon("search")}</span><input id="adminSearch" value="${esc(state.adminQuery)}" placeholder="Tìm người để sửa" autocomplete="off"></label>
+              ${suggestions.length ? `
+                <div class="admin-suggestions" aria-label="Gợi ý tìm kiếm">
+                  ${suggestions.map((person) => `
+                    <button class="admin-suggestion" type="button" data-edit-id="${esc(person.id)}">
+                      <strong>${esc(person.fullName)}</strong>
+                      <span>${esc([person.familyRole, formatDate(person.birthDate), personResidence(person)].filter(Boolean).join(" · ") || "Chưa cập nhật")}</span>
+                    </button>
+                  `).join("")}
+                </div>
+              ` : adminQuery ? `<p class="notice admin-search-empty">Không thấy tên phù hợp. Hãy thử gỡ dấu hoặc nhập ít chữ hơn.</p>` : ""}
               <div class="import-actions">
                 <button class="btn" id="newPersonBtn">Thêm người</button>
                 <button class="ghost-btn" id="exportBtn">Xuất JSON</button>
@@ -1634,12 +1707,12 @@ function renderAdminPanel() {
               ${storageSummary()}
             </div>
             <div class="person-list">
-              ${people.map((person) => `
+              ${people.length ? people.map((person) => `
                 <button class="admin-person-row ${person.id === state.editingId ? "active" : ""}" data-edit-id="${esc(person.id)}">
                   ${person.photo ? `<img class="mini-avatar" src="${esc(assetUrl(person.photo))}" alt="">` : `<span class="mini-avatar avatar-fallback">${esc(initials(person.fullName))}</span>`}
                   <span><strong>${esc(person.fullName)}</strong><br><span class="person-meta">${esc(person.familyRole || person.job || personResidence(person) || "Chưa cập nhật")}</span></span>
                 </button>
-              `).join("")}
+              `).join("") : `<p class="notice empty-admin-search">Không có kết quả phù hợp.</p>`}
             </div>
             <div class="viewer-account-box">
               <h3>Tài khoản truy cập</h3>
@@ -1809,6 +1882,27 @@ function bindAdmin() {
   $("#adminSearch").addEventListener("input", (event) => {
     state.adminQuery = event.target.value;
     renderAdminPanel();
+    const input = $("#adminSearch");
+    if (input) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  });
+  $("#adminSearch").addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    const firstSuggestion = $(".admin-suggestion");
+    if (!firstSuggestion) return;
+    event.preventDefault();
+    state.editingId = firstSuggestion.dataset.editId;
+    state.adminQuery = personById(state.editingId)?.fullName || state.adminQuery;
+    renderAdminPanel();
+  });
+  $$(".admin-suggestion").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.editingId = button.dataset.editId;
+      state.adminQuery = personById(state.editingId)?.fullName || state.adminQuery;
+      renderAdminPanel();
+    });
   });
   $("#newPersonBtn").addEventListener("click", () => {
     state.editingId = "";
