@@ -738,7 +738,7 @@ function buildLayout() {
   const ROW_CENTER_GAP = Math.max(28, Math.round(GROUP_GAP * 0.72));
   Array.from(groupsByGen.keys())
     .sort((a, b) => a - b)
-    .filter((gen) => gen !== firstGen)
+    .filter((gen) => gen !== firstGen && gen <= firstGen + 2)
     .forEach((gen) => {
       const groups = (groupsByGen.get(gen) || [])
         .slice()
@@ -772,67 +772,50 @@ function buildLayout() {
     if (!relationChildren.has(key)) relationChildren.set(key, []);
     relationChildren.get(key).push(person);
   });
-  const lockedLeafGroups = new Set();
-  const alignSingleLeafChildren = () => {
+  const relationChildGroups = (childPeople) => Array.from(new Set(
+    childPeople.map((child) => groupById.get(child.id) || [child.id]),
+  ));
+  const alignLowerRelations = () => {
     relationChildren.forEach((childPeople, key) => {
-      if (childPeople.length !== 1) return;
-      const child = childPeople[0];
-      if ((children.get(child.id) || []).length) return;
+      const childGen = Math.min(...childPeople.map((child) => generation.get(child.id) ?? 0));
+      if (childGen <= firstGen + 2) return;
       const target = parentCenterForKey(key);
-      const childPos = positions.get(child.id);
-      if (target === null || !childPos) return;
-      const delta = target - (childPos.x + childPos.w / 2);
-      const childGroup = groupById.get(child.id) || [child.id];
-      lockedLeafGroups.add(childGroup);
+      if (target === null) return;
+      const childBounds = relationChildGroups(childPeople)
+        .map(groupBounds)
+        .filter(Boolean);
+      if (!childBounds.length) return;
+      const childCenter = (
+        Math.min(...childBounds.map((item) => item.minX))
+        + Math.max(...childBounds.map((item) => item.maxX))
+      ) / 2;
+      const delta = target - childCenter;
       if (Math.abs(delta) < 1) return;
-      shiftGroup(childGroup, delta);
+      relationChildGroups(childPeople).forEach((group) => shiftGroup(group, delta));
     });
   };
-  const resolveLeafCollisions = () => {
+  const resolveLowerCollisions = () => {
     const gap = Math.max(12, Math.round(GROUP_GAP * 0.2));
     Array.from(groupsByGen.keys()).sort((a, b) => a - b).forEach((gen) => {
+      if (gen <= firstGen + 2) return;
       const items = (groupsByGen.get(gen) || [])
-        .map((group) => ({ group, bounds: groupBounds(group), locked: lockedLeafGroups.has(group) }))
+        .map((group) => ({ group, bounds: groupBounds(group) }))
         .filter((item) => item.bounds)
         .sort((a, b) => a.bounds.minX - b.bounds.minX);
-      items.forEach((item, index) => {
-        if (!item.locked) return;
-        let leftCursor = item.bounds.minX - gap;
-        for (let leftIndex = index - 1; leftIndex >= 0; leftIndex--) {
-          const left = items[leftIndex];
-          if (left.locked) {
-            leftCursor = left.bounds.minX - gap;
-            continue;
-          }
-          if (left.bounds.maxX > leftCursor) {
-            const delta = leftCursor - left.bounds.maxX;
-            shiftGroup(left.group, delta);
-            left.bounds.minX += delta;
-            left.bounds.maxX += delta;
-          }
-          leftCursor = left.bounds.minX - gap;
+      for (let index = 1; index < items.length; index++) {
+        const previous = items[index - 1];
+        const current = items[index];
+        const overlap = previous.bounds.maxX + gap - current.bounds.minX;
+        if (overlap > 0) {
+          shiftGroup(current.group, overlap);
+          current.bounds.minX += overlap;
+          current.bounds.maxX += overlap;
         }
-        let rightCursor = item.bounds.maxX + gap;
-        for (let rightIndex = index + 1; rightIndex < items.length; rightIndex++) {
-          const right = items[rightIndex];
-          if (right.locked) {
-            rightCursor = right.bounds.maxX + gap;
-            continue;
-          }
-          if (right.bounds.minX < rightCursor) {
-            const delta = rightCursor - right.bounds.minX;
-            shiftGroup(right.group, delta);
-            right.bounds.minX += delta;
-            right.bounds.maxX += delta;
-          }
-          rightCursor = right.bounds.maxX + gap;
-        }
-      });
+      }
     });
   };
-  alignSingleLeafChildren();
-  resolveLeafCollisions();
-  alignSingleLeafChildren();
+  alignLowerRelations();
+  resolveLowerCollisions();
   const finalMinX = Math.min(...Array.from(positions.values()).map((position) => position.x), PADDING);
   if (finalMinX < PADDING) {
     const delta = PADDING - finalMinX;
