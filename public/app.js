@@ -494,7 +494,11 @@ function buildLayout() {
     const extraForRelations = Math.max(0, relationCount - 1) * 30;
     const extraForChildren = Math.max(0, maxChildren - 2) * 12;
     const extraForCrowding = Math.max(0, childTotal - 6) * 5;
-    rowGapAfter.set(gen, BASE_ROW_GAP + Math.min(420, extraForRelations + extraForChildren + extraForCrowding));
+    const roomForSeparateEdgeTracks = 92 + childTotal * 16;
+    rowGapAfter.set(gen, Math.max(
+      BASE_ROW_GAP + Math.min(420, extraForRelations + extraForChildren + extraForCrowding),
+      roomForSeparateEdgeTracks,
+    ));
   });
   const yForGeneration = new Map();
   Array.from(generations.keys())
@@ -1007,87 +1011,78 @@ function personMatches(person) {
   return haystack.includes(normalizeText(state.query));
 }
 
-function rangesOverlap(a, b, gap = 10) {
+function rangesOverlap(a, b, gap = 0) {
   return a.start <= b.end + gap && b.start <= a.end + gap;
 }
 
-function routeTreeEdgeGroups(groups) {
-  const HORIZONTAL_GAP = 28;
-  const VERTICAL_LANE_GAP = 16;
-  const CROSS_GAP = 7;
-  const occupiedHorizontals = [];
-  const occupiedVerticals = [];
-  const between = (value, a, b, gap = 0) => value >= Math.min(a, b) - gap && value <= Math.max(a, b) + gap;
-  const xInSpan = (x, span, gap = 0) => x >= span.start - gap && x <= span.end + gap;
-  const verticalSegmentsFor = (item, y) => [
-    { x: item.group.parentX, startY: item.group.parentY, endY: y },
-    ...item.childXs.map((childX) => ({ x: childX, startY: y, endY: item.group.childY - 8 })),
-  ];
-  const conflictScore = (item, y) => {
-    let score = 0;
-    occupiedHorizontals.forEach((line) => {
-      if (Math.abs(line.y - y) < VERTICAL_LANE_GAP && rangesOverlap(item.span, line, HORIZONTAL_GAP)) score += 100;
-      verticalSegmentsFor(item, y).forEach((vertical) => {
-        if (xInSpan(vertical.x, line, CROSS_GAP) && between(line.y, vertical.startY, vertical.endY, CROSS_GAP)) score += 18;
+function routeTreeEdgeGroups(edges) {
+  const HORIZONTAL_GAP = 22;
+  const LANE_GAP = 16;
+  const groups = new Map();
+
+  edges.forEach((edge) => {
+    const key = `${edge.relationKey}|${Math.round(edge.parentY)}|${Math.round(edge.childY)}`;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        relationKey: edge.relationKey,
+        parentX: edge.parentX,
+        parentY: edge.parentY,
+        childY: edge.childY,
+        childXs: [],
       });
-    });
-    occupiedVerticals.forEach((line) => {
-      if (xInSpan(line.x, item.span, CROSS_GAP) && between(y, line.startY, line.endY, CROSS_GAP)) score += 18;
-    });
-    return score;
-  };
-  const candidateYs = (top, bottom, ideal, childY) => {
-    const minY = Math.min(top, bottom);
-    const maxY = Math.max(top, bottom);
-    const values = [];
-    const add = (value) => {
-      const rounded = Math.round(value);
-      if (rounded < top - 36 || rounded > childY - 22) return;
-      if (!values.includes(rounded)) values.push(rounded);
-    };
-    add(ideal);
-    for (let offset = VERTICAL_LANE_GAP; offset <= Math.max(80, maxY - minY + VERTICAL_LANE_GAP); offset += VERTICAL_LANE_GAP) {
-      add(ideal - offset);
-      add(ideal + offset);
     }
-    for (let y = minY; y <= maxY; y += VERTICAL_LANE_GAP) add(y);
-    for (let y = maxY + VERTICAL_LANE_GAP; y <= childY - 24; y += VERTICAL_LANE_GAP) add(y);
-    return values;
-  };
+    groups.get(key).childXs.push(edge.childX);
+  });
 
-  groups
-    .map((group) => {
-      const childXs = [...new Set(group.childXs)].sort((a, b) => a - b);
-      const span = {
-        start: Math.min(group.parentX, ...childXs),
-        end: Math.max(group.parentX, ...childXs),
-      };
-      const top = group.parentY + 24;
-      const bottom = group.childY - 42;
-      const ideal = top < bottom ? top + (bottom - top) / 2 : group.parentY + (group.childY - group.parentY) / 2;
-      return { group, childXs, span, top, bottom, ideal };
-    })
-    .sort((a, b) => {
-      const verticalDiff = a.top - b.top;
-      if (Math.abs(verticalDiff) > 4) return verticalDiff;
-      const widthDiff = (b.span.end - b.span.start) - (a.span.end - a.span.start);
-      if (widthDiff !== 0) return widthDiff;
-      return a.span.start - b.span.start;
-    })
-    .forEach((item) => {
-      const candidates = candidateYs(item.top, item.bottom, item.ideal, item.group.childY);
-      let y = candidates.find((candidate) => conflictScore(item, candidate) === 0);
-      if (y === undefined) {
-        y = candidates
-          .map((candidate) => ({ y: candidate, score: conflictScore(item, candidate), distance: Math.abs(candidate - item.ideal) }))
-          .sort((a, b) => a.score - b.score || a.distance - b.distance)[0]?.y || Math.round(item.ideal);
-      }
-      item.group.midY = y;
-      occupiedHorizontals.push({ ...item.span, y });
-      occupiedVerticals.push(...verticalSegmentsFor(item, y));
+  const routed = Array.from(groups.values()).map((group) => {
+    const childXs = [...new Set(group.childXs)].sort((a, b) => a - b);
+    const span = {
+      start: Math.min(group.parentX, ...childXs),
+      end: Math.max(group.parentX, ...childXs),
+    };
+    return { ...group, childXs, span, lane: 0, midY: 0 };
+  });
+
+  const bands = new Map();
+  routed.forEach((group) => {
+    const key = `${Math.round(group.parentY)}|${Math.round(group.childY)}`;
+    if (!bands.has(key)) bands.set(key, []);
+    bands.get(key).push(group);
+  });
+
+  bands.forEach((bandGroups) => {
+    const lanes = [];
+    bandGroups
+      .sort((a, b) => {
+        const widthDiff = (b.span.end - b.span.start) - (a.span.end - a.span.start);
+        if (widthDiff !== 0) return widthDiff;
+        return a.span.start - b.span.start;
+      })
+      .forEach((group) => {
+        let laneIndex = lanes.findIndex((lane) => lane.every((item) => !rangesOverlap(item.span, group.span, HORIZONTAL_GAP)));
+        if (laneIndex < 0) {
+          laneIndex = lanes.length;
+          lanes.push([]);
+        }
+        lanes[laneIndex].push(group);
+        group.lane = laneIndex;
+      });
+
+    const top = Math.min(...bandGroups.map((group) => group.parentY)) + 26;
+    const bottom = Math.max(...bandGroups.map((group) => group.childY)) - 44;
+    const available = Math.max(0, bottom - top);
+    const step = lanes.length > 1
+      ? Math.max(9, Math.min(LANE_GAP, available / (lanes.length - 1 || 1)))
+      : 0;
+    const firstY = available > 0
+      ? top + Math.max(8, (available - step * Math.max(0, lanes.length - 1)) / 2)
+      : Math.min(...bandGroups.map((group) => group.parentY)) + 48;
+    bandGroups.forEach((group) => {
+      group.midY = Math.round((firstY + group.lane * step) * 10) / 10;
     });
+  });
 
-  return groups;
+  return routed;
 }
 
 function renderTree() {
@@ -1095,7 +1090,7 @@ function renderTree() {
   const layout = buildLayout();
   const queryActive = state.query.trim();
   const spouseLines = [];
-  const edgeGroups = new Map();
+  const rawEdges = [];
 
   state.data.people.forEach((person) => {
     const pos = layout.positions.get(person.id);
@@ -1115,40 +1110,42 @@ function renderTree() {
     if (!parentPositions.length) return;
     const parentX = parentPositions.reduce((sum, item) => sum + item.x + item.w / 2, 0) / parentPositions.length;
     const parentY = Math.max(...parentPositions.map((item) => item.y + item.h));
-    const fatherCenter = fatherPos ? fatherPos.x + fatherPos.w / 2 : parentX;
     const childX = pos.x + pos.w / 2;
     const childY = pos.y;
     const relationKey = `${person.fatherId || "_"}|${person.motherId || "_"}`;
-    const groupKey = `${relationKey}|${Math.round(childY)}`;
-    if (!edgeGroups.has(groupKey)) {
-      edgeGroups.set(groupKey, { relationKey, fatherId: person.fatherId || "", parentX, parentY, childY, childXs: [], side: parentX - fatherCenter });
-    }
-    edgeGroups.get(groupKey).childXs.push(childX);
+    rawEdges.push({
+      relationKey,
+      fatherId: person.fatherId || "",
+      parentX,
+      parentY,
+      childX,
+      childY,
+    });
   });
 
-  const routedEdgeGroups = routeTreeEdgeGroups(Array.from(edgeGroups.values()));
+  const routedEdgeGroups = routeTreeEdgeGroups(rawEdges);
   const edgeMaxY = routedEdgeGroups.reduce((max, group) => Math.max(max, group.midY || 0, group.childY || 0, group.parentY || 0), 0);
   layout.height = Math.max(layout.height, edgeMaxY + 96);
   routedEdgeGroups.forEach((group) => {
-    const childXs = [...new Set(group.childXs)].sort((a, b) => a - b);
-    layout.contentBounds.minX = Math.min(layout.contentBounds.minX, group.parentX, ...childXs);
-    layout.contentBounds.maxX = Math.max(layout.contentBounds.maxX, group.parentX, ...childXs);
+    layout.contentBounds.minX = Math.min(layout.contentBounds.minX, group.parentX, ...group.childXs);
+    layout.contentBounds.maxX = Math.max(layout.contentBounds.maxX, group.parentX, ...group.childXs);
     layout.contentBounds.minY = Math.min(layout.contentBounds.minY, group.parentY, group.midY);
     layout.contentBounds.maxY = Math.max(layout.contentBounds.maxY, group.childY, group.midY);
   });
 
   const edges = routedEdgeGroups.flatMap((group) => {
-    const childXs = [...new Set(group.childXs)].sort((a, b) => a - b);
-    const branchStart = Math.min(group.parentX, ...childXs);
-    const branchEnd = Math.max(group.parentX, ...childXs);
-    const paths = [
-      `M ${group.parentX} ${group.parentY} V ${group.midY} M ${branchStart} ${group.midY} H ${branchEnd}`,
-      ...childXs.map((childX) => `M ${childX} ${group.midY} V ${group.childY - 8}`),
+    const branchStart = Math.min(group.parentX, ...group.childXs);
+    const branchEnd = Math.max(group.parentX, ...group.childXs);
+    const trunkPath = `M ${group.parentX} ${group.parentY} V ${group.midY} M ${branchStart} ${group.midY} H ${branchEnd}`;
+    const childPaths = group.childXs.map((childX) => `M ${childX} ${group.midY} V ${group.childY - 8}`);
+    return [
+      `<path class="edge-halo" d="${trunkPath}"></path>`,
+      `<path class="edge" d="${trunkPath}"></path>`,
+      ...childPaths.flatMap((path) => [
+        `<path class="edge-halo" d="${path}"></path>`,
+        `<path class="edge" marker-end="url(#arrow)" d="${path}"></path>`,
+      ]),
     ];
-    return paths.flatMap((path, index) => [
-      `<path class="edge-halo" d="${path}"></path>`,
-      `<path class="edge" ${index ? `marker-end="url(#arrow)"` : ""} d="${path}"></path>`,
-    ]);
   });
 
   const cards = state.data.people.map((person) => {
