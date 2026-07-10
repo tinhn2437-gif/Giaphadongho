@@ -767,7 +767,7 @@ function buildLayout() {
     .map((id) => positions.get(id))
     .filter(Boolean)
     .sort((a, b) => a.x - b.x);
-  const axisX = topPositions.length
+  let axisX = topPositions.length
     ? topPositions[Math.floor(topPositions.length / 2)].x + CARD_W / 2
     : PADDING + CARD_W / 2;
   const ROW_CENTER_GAP = Math.max(28, Math.round(GROUP_GAP * 0.72));
@@ -857,6 +857,7 @@ function buildLayout() {
     positions.forEach((position) => {
       position.x += delta;
     });
+    axisX += delta;
   }
   maxX = Math.max(...Array.from(positions.values()).map((position) => position.x + position.w), PADDING);
   const contentBounds = Array.from(positions.values()).reduce((bounds, position) => ({
@@ -871,6 +872,14 @@ function buildLayout() {
     contentBounds.maxX = PADDING;
     contentBounds.maxY = PADDING;
   }
+  const balanceRadius = Math.max(
+    axisX - contentBounds.minX,
+    contentBounds.maxX - axisX,
+    CARD_W,
+  );
+  contentBounds.minX = axisX - balanceRadius;
+  contentBounds.maxX = axisX + balanceRadius;
+  maxX = Math.max(maxX, contentBounds.maxX);
 
   return {
     byId,
@@ -881,6 +890,7 @@ function buildLayout() {
     cardH: CARD_H,
     photoW: PHOTO_W,
     photoH: PHOTO_H,
+    axisX,
     contentBounds,
     width: Math.max(maxX + PADDING, 900),
     height: Math.max(maxY + PADDING, 600),
@@ -1132,6 +1142,14 @@ function renderTree() {
     layout.contentBounds.minY = Math.min(layout.contentBounds.minY, group.parentY, group.midY);
     layout.contentBounds.maxY = Math.max(layout.contentBounds.maxY, group.childY, group.midY);
   });
+  const balancedRadius = Math.max(
+    layout.axisX - layout.contentBounds.minX,
+    layout.contentBounds.maxX - layout.axisX,
+    layout.cardW,
+  );
+  layout.contentBounds.minX = layout.axisX - balancedRadius;
+  layout.contentBounds.maxX = layout.axisX + balancedRadius;
+  layout.width = Math.max(layout.width, layout.contentBounds.maxX + 80, 900);
 
   const edges = routedEdgeGroups.flatMap((group) => {
     const branchStart = Math.min(group.parentX, ...group.childXs);
