@@ -1171,7 +1171,7 @@ function kinshipResult(personA, personB) {
     <div class="kinship-answer">
       <p><strong>${esc(personA.fullName)}</strong> gọi <strong>${esc(personB.fullName)}</strong> là <b>${esc(speechAB.call)}</b>, xưng <b>${esc(speechAB.self)}</b>.</p>
       <p><strong>${esc(personB.fullName)}</strong> gọi <strong>${esc(personA.fullName)}</strong> là <b>${esc(speechBA.call)}</b>, xưng <b>${esc(speechBA.self)}</b>.</p>
-      <span>Gợi ý theo nếp gọi Kỳ Anh/Hà Tĩnh: ông gọi “Ôông”, bà gọi “Mệ/Mụ”, cô bên bố gọi “O”. Từng nhà có thể chỉnh lại theo thói quen riêng.</span>
+      <span>Gợi ý theo bảng xưng hô thực tế của họ: bố/mẹ gọi “Bố/Mẹ”, cô bên bố gọi “O”, anh/chị gọi “Anh/Chị”. Từng nhà có thể chỉnh lại theo thói quen riêng.</span>
     </div>
   `;
 }
@@ -1192,7 +1192,7 @@ function ancestorsOf(person) {
 
 function kinshipTerm(speaker, target) {
   if (!speaker || !target) return "chưa rõ";
-  if (areSpouses(speaker, target)) return target.gender === "Nam" ? "Nhôông / Ôông nhà" : "Gấy / Mụ nhà";
+  if (areSpouses(speaker, target)) return target.gender === "Nam" ? "Chồng" : "Vợ";
   const direct = bloodKinshipTerm(speaker, target);
   if (direct) return direct;
   for (const spouseId of target.spouseIds || []) {
@@ -1212,13 +1212,15 @@ function kinshipSpeech(speaker, target) {
 }
 
 function kinshipSelfPronoun(speaker, target, call) {
-  if (areSpouses(speaker, target)) return speaker.gender === "Nam" ? "Tôi / Nhôông" : "Tôi / Gấy";
-  if (["Bọ / Thầy / Ba", "Mạ / Mệ / U", "Ôông", "Mệ / Mụ", "Cố / Cụ", "Kỵ", "Cao tổ"].includes(call)) return "Con";
-  if (["Bác / Bọ lớn", "Chú / Chú em", "O", "Cậu", "Dì", "ông họ", "bà họ"].includes(call)) return "Cháu / Con";
-  if (call === "Ả" || call.startsWith("Anh")) return "Em / Tui";
-  if (call === "Em") return "Tui";
-  if (["con", "cháu", "chắt", "chút", "chít"].includes(call)) return speaker.gender === "Nam" ? "Bọ / Tui" : "Mạ / Tui";
-  return "Tui";
+  if (areSpouses(speaker, target)) return speaker.gender === "Nam" ? "Chồng" : "Vợ";
+  if (["Bố", "Mẹ"].includes(call)) return "Con";
+  if (["Ông nội", "Ông ngoại", "Bà nội", "Bà ngoại"].includes(call)) return "Cháu";
+  if (call === "Cố") return "Chắt";
+  if (["Bác", "Chú", "O", "Cậu", "Dì", "ông họ", "bà họ"].includes(call)) return "Cháu";
+  if (["Chị", "Anh"].includes(call) || call.startsWith("Chị ") || call.startsWith("Anh ")) return "Em";
+  if (call === "Em") return speaker.gender === "Nam" ? "Anh" : "Chị";
+  if (["con", "cháu", "chắt", "chút", "chít"].includes(call)) return speaker.gender === "Nam" ? "Bố" : "Mẹ";
+  return "Tôi";
 }
 
 function areSpouses(personA, personB) {
@@ -1230,7 +1232,7 @@ function bloodKinshipTerm(speaker, target) {
   if (!speaker || !target) return "";
   const speakerAncestors = ancestorsOf(speaker);
   const targetAncestors = ancestorsOf(target);
-  if (speakerAncestors.has(target.id)) return ancestorTerm(speakerAncestors.get(target.id), target.gender);
+  if (speakerAncestors.has(target.id)) return ancestorTerm(speaker, target, speakerAncestors.get(target.id));
   if (targetAncestors.has(speaker.id)) return descendantTerm(targetAncestors.get(speaker.id));
   if (siblingKey(speaker) && siblingKey(speaker) === siblingKey(target)) return siblingTerm(speaker, target, "");
 
@@ -1248,10 +1250,14 @@ function bloodKinshipTerm(speaker, target) {
   return collateralYoungerTerm(-diff);
 }
 
-function ancestorTerm(depth, gender) {
-  if (depth === 1) return gender === "Nam" ? "Bọ / Thầy / Ba" : "Mạ / Mệ / U";
-  if (depth === 2) return gender === "Nam" ? "Ôông" : "Mệ / Mụ";
-  if (depth === 3) return "Cố / Cụ";
+function ancestorTerm(speaker, target, depth) {
+  if (depth === 1) return target.gender === "Nam" ? "Bố" : "Mẹ";
+  if (depth === 2) {
+    const parent = directChildBetween(speaker, target);
+    const side = parent?.gender === "Nam" ? "nội" : "ngoại";
+    return target.gender === "Nam" ? `Ông ${side}` : `Bà ${side}`;
+  }
+  if (depth === 3) return "Cố";
   if (depth === 4) return "Kỵ";
   return "Cao tổ";
 }
@@ -1268,9 +1274,9 @@ function siblingTerm(speaker, target, suffix) {
   const speakerBirth = birthSortValue(speaker);
   const targetBirth = birthSortValue(target);
   const targetOlder = targetBirth < speakerBirth;
-  if (targetOlder) return `${target.gender === "Nam" ? "Anh / Anh hai" : "Ả"}${suffix}`;
+  if (targetOlder) return `${target.gender === "Nam" ? "Anh" : "Chị"}${suffix}`;
   if (targetBirth > speakerBirth) return `Em${suffix}`;
-  return target.gender === "Nam" ? `Anh/Em${suffix}` : `Ả/Em${suffix}`;
+  return target.gender === "Nam" ? `Anh/Em${suffix}` : `Chị/Em${suffix}`;
 }
 
 function collateralOlderTerm(speaker, target, relation) {
@@ -1281,8 +1287,8 @@ function collateralOlderTerm(speaker, target, relation) {
   const olderThanParent = targetBirth < parentBirth;
   if (speakerParent?.gender === "Nữ") return target.gender === "Nam" ? "Cậu" : "Dì";
   if (target.gender !== "Nam") return "O";
-  if (olderThanParent) return "Bác / Bọ lớn";
-  return "Chú / Chú em";
+  if (olderThanParent) return "Bác";
+  return "Chú";
 }
 
 function collateralYoungerTerm(depthDiff) {
@@ -1303,12 +1309,19 @@ function parentOnPath(personId, ancestorId) {
   return null;
 }
 
+function directChildBetween(descendant, ancestor) {
+  const father = personById(descendant?.fatherId);
+  const mother = personById(descendant?.motherId);
+  if (father && (father.fatherId === ancestor.id || father.motherId === ancestor.id)) return father;
+  if (mother && (mother.fatherId === ancestor.id || mother.motherId === ancestor.id)) return mother;
+  return null;
+}
 function inLawTerm(baseTerm, target) {
   if (baseTerm.startsWith("Anh")) return target.gender === "Nam" ? "anh rể" : "chị dâu";
-  if (baseTerm.startsWith("Ả")) return target.gender === "Nam" ? "anh rể" : "chị dâu";
+  if (baseTerm.startsWith("Chị")) return target.gender === "Nam" ? "anh rể" : "chị dâu";
   if (baseTerm.startsWith("Em")) return target.gender === "Nam" ? "em rể" : "em dâu";
-  if (baseTerm === "Bác / Bọ lớn") return target.gender === "Nam" ? "bác rể" : "bác dâu";
-  if (baseTerm === "Chú / Chú em") return "thím";
+  if (baseTerm === "Bác") return target.gender === "Nam" ? "bác rể" : "bác dâu";
+  if (baseTerm === "Chú") return "thím";
   if (baseTerm === "O" || baseTerm === "Dì") return "dượng";
   if (baseTerm === "Cậu") return "mợ";
   if (baseTerm === "con") return target.gender === "Nam" ? "con rể" : "con dâu";
