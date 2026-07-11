@@ -1171,7 +1171,7 @@ function kinshipResult(personA, personB) {
     <div class="kinship-answer">
       <p><strong>${esc(personA.fullName)}</strong> gọi <strong>${esc(personB.fullName)}</strong> là <b>${esc(speechAB.call)}</b>, xưng <b>${esc(speechAB.self)}</b>.</p>
       <p><strong>${esc(personB.fullName)}</strong> gọi <strong>${esc(personA.fullName)}</strong> là <b>${esc(speechBA.call)}</b>, xưng <b>${esc(speechBA.self)}</b>.</p>
-      <span>Gợi ý theo bảng xưng hô thực tế của họ: bố/mẹ gọi “Bố/Mẹ”, cô bên bố gọi “O”, anh/chị gọi “Anh/Chị”. Từng nhà có thể chỉnh lại theo thói quen riêng.</span>
+      <span>Cách gọi được suy ra theo nhánh bố/mẹ và quan hệ vợ chồng: vợ của bác gọi “Bác”, vợ của chú gọi “Mự”. Cách xưng luôn dùng đúng vai như Con, Cháu, Anh, Chị hoặc Em.</span>
     </div>
   `;
 }
@@ -1193,12 +1193,28 @@ function ancestorsOf(person) {
 function kinshipTerm(speaker, target) {
   if (!speaker || !target) return "chưa rõ";
   if (areSpouses(speaker, target)) return target.gender === "Nam" ? "Chồng" : "Vợ";
+
   const direct = bloodKinshipTerm(speaker, target);
   if (direct) return direct;
-  for (const spouseId of target.spouseIds || []) {
+
+  // A person married into the family normally calls relatives as their spouse does.
+  for (const spouseId of speaker.spouseIds || []) {
     const spouse = personById(spouseId);
-    const spouseTerm = bloodKinshipTerm(speaker, spouse);
-    if (spouseTerm) return inLawTerm(spouseTerm, target);
+    const inheritedTerm = bloodKinshipTerm(spouse, target);
+    if (inheritedTerm) return inheritedTerm;
+  }
+
+  // The title of an in-law follows the blood relative they married.
+  for (const spouseId of target.spouseIds || []) {
+    const targetSpouse = personById(spouseId);
+    const directSpouseTerm = bloodKinshipTerm(speaker, targetSpouse);
+    if (directSpouseTerm) return inLawTerm(directSpouseTerm, target);
+
+    for (const speakerSpouseId of speaker.spouseIds || []) {
+      const speakerSpouse = personById(speakerSpouseId);
+      const sharedInLawTerm = bloodKinshipTerm(speakerSpouse, targetSpouse);
+      if (sharedInLawTerm) return inLawTerm(sharedInLawTerm, target);
+    }
   }
   return "họ hàng trong nhánh Nguyễn Hữu";
 }
@@ -1212,15 +1228,10 @@ function kinshipSpeech(speaker, target) {
 }
 
 function kinshipSelfPronoun(speaker, target, call) {
-  if (areSpouses(speaker, target)) return speaker.gender === "Nam" ? "Chồng" : "Vợ";
-  if (["Bố", "Mẹ"].includes(call)) return "Con";
-  if (["Ông nội", "Ông ngoại", "Bà nội", "Bà ngoại"].includes(call)) return "Cháu";
-  if (call === "Cố") return "Chắt";
-  if (["Bác", "Chú", "O", "Cậu", "Dì", "ông họ", "bà họ"].includes(call)) return "Cháu";
-  if (["Chị", "Anh"].includes(call) || call.startsWith("Chị ") || call.startsWith("Anh ")) return "Em";
-  if (call === "Em") return speaker.gender === "Nam" ? "Anh" : "Chị";
-  if (["con", "cháu", "chắt", "chút", "chít"].includes(call)) return speaker.gender === "Nam" ? "Bố" : "Mẹ";
-  return "Tôi";
+  const reciprocal = kinshipTerm(target, speaker);
+  if (!reciprocal || reciprocal === "chưa rõ") return "Chưa rõ";
+  if (reciprocal === "họ hàng trong nhánh Nguyễn Hữu") return "Người trong họ";
+  return reciprocal.charAt(0).toUpperCase() + reciprocal.slice(1);
 }
 
 function areSpouses(personA, personB) {
@@ -1317,15 +1328,22 @@ function directChildBetween(descendant, ancestor) {
   return null;
 }
 function inLawTerm(baseTerm, target) {
-  if (baseTerm.startsWith("Anh")) return target.gender === "Nam" ? "anh rể" : "chị dâu";
-  if (baseTerm.startsWith("Chị")) return target.gender === "Nam" ? "anh rể" : "chị dâu";
-  if (baseTerm.startsWith("Em")) return target.gender === "Nam" ? "em rể" : "em dâu";
-  if (baseTerm === "Bác") return target.gender === "Nam" ? "bác rể" : "bác dâu";
-  if (baseTerm === "Chú") return "thím";
-  if (baseTerm === "O" || baseTerm === "Dì") return "dượng";
-  if (baseTerm === "Cậu") return "mợ";
-  if (baseTerm === "con") return target.gender === "Nam" ? "con rể" : "con dâu";
-  return `${baseTerm} bên dâu/rể`;
+  const isMale = target.gender === "Nam";
+  if (baseTerm.startsWith("Anh")) return isMale ? "Anh" : "Chị";
+  if (baseTerm.startsWith("Chị")) return isMale ? "Anh" : "Chị";
+  if (baseTerm.startsWith("Em")) return "Em";
+  if (baseTerm === "Bác") return "Bác";
+  if (baseTerm === "Chú") return isMale ? "Chú" : "Mự";
+  if (baseTerm === "O" || baseTerm === "Dì") return isMale ? "Dượng" : baseTerm;
+  if (baseTerm === "Cậu") return isMale ? "Cậu" : "Mợ";
+  if (baseTerm === "Bố" || baseTerm === "Mẹ") return isMale ? "Bố" : "Mẹ";
+  if (baseTerm.startsWith("Ông ") || baseTerm.startsWith("Bà ")) {
+    const side = baseTerm.includes("ngoại") ? "ngoại" : "nội";
+    return isMale ? `Ông ${side}` : `Bà ${side}`;
+  }
+  if (["Cố", "Kỵ", "Cao tổ"].includes(baseTerm)) return baseTerm;
+  if (["con", "cháu", "chắt", "chút", "chít", "chút/chít"].includes(baseTerm)) return baseTerm;
+  return baseTerm;
 }
 
 function rangesOverlap(a, b, gap = 0) {
