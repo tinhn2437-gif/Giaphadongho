@@ -357,13 +357,70 @@ a {
 
 .tool-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(52px, 1fr));
   gap: 8px;
 }
 
 .tool-action {
   width: 100%;
   min-height: 48px;
+}
+
+.kinship-fab {
+  position: fixed;
+  right: 22px;
+  bottom: 22px;
+  z-index: 35;
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border: 1px solid rgba(255, 225, 153, 0.9);
+  border-radius: 50%;
+  background:
+    radial-gradient(circle at 30% 20%, rgba(255, 248, 205, 0.95), transparent 32%),
+    linear-gradient(145deg, #bd4b1f, #7d2416);
+  color: #fff8dd;
+  box-shadow: 0 16px 34px rgba(75, 33, 14, 0.32), inset 0 1px 0 rgba(255, 255, 255, 0.35);
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.kinship-fab:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 20px 42px rgba(75, 33, 14, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.kinship-fab .icon {
+  width: 30px;
+  height: 30px;
+  stroke-width: 2.3;
+}
+
+.kinship-fab span {
+  position: absolute;
+  right: 74px;
+  bottom: 13px;
+  width: max-content;
+  max-width: 210px;
+  padding: 9px 11px;
+  border: 1px solid rgba(198, 146, 57, 0.55);
+  border-radius: 8px;
+  background: rgba(255, 252, 235, 0.98);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 900;
+  box-shadow: 0 12px 28px rgba(53, 30, 13, 0.18);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(6px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.kinship-fab:hover span,
+.kinship-fab:focus-visible span {
+  opacity: 1;
+  transform: translateX(0);
 }
 
 .kinship-modal {
@@ -1951,5 +2008,16 @@ th {
   .kinship-head {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .kinship-fab {
+    right: 14px;
+    bottom: 14px;
+    width: 54px;
+    height: 54px;
+  }
+
+  .kinship-fab span {
+    display: none;
   }
 }

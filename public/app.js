@@ -976,6 +976,7 @@ function renderPublic() {
         ${renderControlMenu(stats)}
         ${state.view === "tree" ? renderTree() : renderList()}
       </main>
+      ${renderKinshipFloatButton()}
       ${state.selectedId ? renderDetail(state.selectedId) : ""}
       ${state.kinshipOpen ? renderKinshipLookup() : ""}
       ${renderPhotoViewer()}
@@ -1048,7 +1049,6 @@ function renderControlMenu(stats) {
         <div class="menu-section">
           <h3>Công cụ</h3>
           <div class="tool-grid">
-            <button class="icon-btn tool-action" id="kinshipOpenBtn" type="button" title="Tra cứu cách xưng hô" aria-label="Tra cứu cách xưng hô">${icon("users")}</button>
             <button class="icon-btn tool-action" id="exportExcelBtn" type="button" title="Xuất Excel" aria-label="Xuất Excel">${icon("download")}</button>
           </div>
         </div>
@@ -1062,6 +1062,15 @@ function renderControlMenu(stats) {
         <div class="menu-section menu-help">Kéo để di chuyển, chụm hai ngón để thu phóng, hoặc dùng nút mũi tên.</div>
       </div>
     </section>
+  `;
+}
+
+function renderKinshipFloatButton() {
+  return `
+    <button class="kinship-fab" id="kinshipFloatBtn" type="button" title="Tra cứu cách xưng hô" aria-label="Tra cứu cách xưng hô">
+      ${icon("users")}
+      <span>Tra cứu cách xưng hô</span>
+    </button>
   `;
 }
 
@@ -1156,13 +1165,13 @@ function renderKinshipLookup() {
 function kinshipResult(personA, personB) {
   if (!personA || !personB) return `<p class="notice">Chọn đủ hai người để xem cách xưng hô.</p>`;
   if (personA.id === personB.id) return `<p><strong>${esc(personA.fullName)}</strong> là cùng một người.</p>`;
-  const termAB = kinshipTerm(personA, personB);
-  const termBA = kinshipTerm(personB, personA);
+  const speechAB = kinshipSpeech(personA, personB);
+  const speechBA = kinshipSpeech(personB, personA);
   return `
     <div class="kinship-answer">
-      <p><strong>${esc(personA.fullName)}</strong> nên gọi <strong>${esc(personB.fullName)}</strong> là <b>${esc(termAB)}</b>.</p>
-      <p><strong>${esc(personB.fullName)}</strong> nên gọi <strong>${esc(personA.fullName)}</strong> là <b>${esc(termBA)}</b>.</p>
-      <span>Gợi ý theo cách xưng hô gia đình Việt ở miền Trung/Hà Tĩnh; các gia đình có thể điều chỉnh theo tuổi và nếp gọi riêng.</span>
+      <p><strong>${esc(personA.fullName)}</strong> gọi <strong>${esc(personB.fullName)}</strong> là <b>${esc(speechAB.call)}</b>, xưng <b>${esc(speechAB.self)}</b>.</p>
+      <p><strong>${esc(personB.fullName)}</strong> gọi <strong>${esc(personA.fullName)}</strong> là <b>${esc(speechBA.call)}</b>, xưng <b>${esc(speechBA.self)}</b>.</p>
+      <span>Gợi ý theo nếp gọi Kỳ Anh/Hà Tĩnh: ông gọi “Ôông”, bà gọi “Mệ/Mụ”, cô bên bố gọi “O”. Từng nhà có thể chỉnh lại theo thói quen riêng.</span>
     </div>
   `;
 }
@@ -1183,7 +1192,7 @@ function ancestorsOf(person) {
 
 function kinshipTerm(speaker, target) {
   if (!speaker || !target) return "chưa rõ";
-  if ((speaker.spouseIds || []).includes(target.id)) return target.gender === "Nam" ? "chồng" : "vợ";
+  if (areSpouses(speaker, target)) return target.gender === "Nam" ? "Nhôông / Ôông nhà" : "Gấy / Mụ nhà";
   const direct = bloodKinshipTerm(speaker, target);
   if (direct) return direct;
   for (const spouseId of target.spouseIds || []) {
@@ -1192,6 +1201,29 @@ function kinshipTerm(speaker, target) {
     if (spouseTerm) return inLawTerm(spouseTerm, target);
   }
   return "họ hàng trong nhánh Nguyễn Hữu";
+}
+
+function kinshipSpeech(speaker, target) {
+  const call = kinshipTerm(speaker, target);
+  return {
+    call,
+    self: kinshipSelfPronoun(speaker, target, call),
+  };
+}
+
+function kinshipSelfPronoun(speaker, target, call) {
+  if (areSpouses(speaker, target)) return speaker.gender === "Nam" ? "Tôi / Nhôông" : "Tôi / Gấy";
+  if (["Bọ / Thầy / Ba", "Mạ / Mệ / U", "Ôông", "Mệ / Mụ", "Cố / Cụ", "Kỵ", "Cao tổ"].includes(call)) return "Con";
+  if (["Bác / Bọ lớn", "Chú / Chú em", "O", "Cậu", "Dì", "ông họ", "bà họ"].includes(call)) return "Cháu / Con";
+  if (call === "Ả" || call.startsWith("Anh")) return "Em / Tui";
+  if (call === "Em") return "Tui";
+  if (["con", "cháu", "chắt", "chút", "chít"].includes(call)) return speaker.gender === "Nam" ? "Bọ / Tui" : "Mạ / Tui";
+  return "Tui";
+}
+
+function areSpouses(personA, personB) {
+  if (!personA || !personB) return false;
+  return (personA.spouseIds || []).includes(personB.id) || (personB.spouseIds || []).includes(personA.id);
 }
 
 function bloodKinshipTerm(speaker, target) {
@@ -1217,11 +1249,11 @@ function bloodKinshipTerm(speaker, target) {
 }
 
 function ancestorTerm(depth, gender) {
-  if (depth === 1) return gender === "Nam" ? "bố" : "mẹ";
-  if (depth === 2) return gender === "Nam" ? "ông" : "bà";
-  if (depth === 3) return gender === "Nam" ? "cụ ông" : "cụ bà";
-  if (depth === 4) return "kỵ";
-  return "cao tổ";
+  if (depth === 1) return gender === "Nam" ? "Bọ / Thầy / Ba" : "Mạ / Mệ / U";
+  if (depth === 2) return gender === "Nam" ? "Ôông" : "Mệ / Mụ";
+  if (depth === 3) return "Cố / Cụ";
+  if (depth === 4) return "Kỵ";
+  return "Cao tổ";
 }
 
 function descendantTerm(depth) {
@@ -1236,9 +1268,9 @@ function siblingTerm(speaker, target, suffix) {
   const speakerBirth = birthSortValue(speaker);
   const targetBirth = birthSortValue(target);
   const targetOlder = targetBirth < speakerBirth;
-  if (targetOlder) return `${target.gender === "Nam" ? "anh" : "chị"}${suffix}`;
-  if (targetBirth > speakerBirth) return `em${suffix}`;
-  return target.gender === "Nam" ? `anh/em${suffix}` : `chị/em${suffix}`;
+  if (targetOlder) return `${target.gender === "Nam" ? "Anh / Anh hai" : "Ả"}${suffix}`;
+  if (targetBirth > speakerBirth) return `Em${suffix}`;
+  return target.gender === "Nam" ? `Anh/Em${suffix}` : `Ả/Em${suffix}`;
 }
 
 function collateralOlderTerm(speaker, target, relation) {
@@ -1247,10 +1279,10 @@ function collateralOlderTerm(speaker, target, relation) {
   const targetBirth = birthSortValue(target);
   const parentBirth = birthSortValue(speakerParent || {});
   const olderThanParent = targetBirth < parentBirth;
-  if (speakerParent?.gender === "Nữ") return target.gender === "Nam" ? "cậu" : "dì";
-  if (target.gender !== "Nam") return "o";
-  if (olderThanParent) return "bác";
-  return "chú";
+  if (speakerParent?.gender === "Nữ") return target.gender === "Nam" ? "Cậu" : "Dì";
+  if (target.gender !== "Nam") return "O";
+  if (olderThanParent) return "Bác / Bọ lớn";
+  return "Chú / Chú em";
 }
 
 function collateralYoungerTerm(depthDiff) {
@@ -1272,13 +1304,13 @@ function parentOnPath(personId, ancestorId) {
 }
 
 function inLawTerm(baseTerm, target) {
-  if (["anh", "anh họ"].includes(baseTerm)) return target.gender === "Nam" ? "anh rể" : "chị dâu";
-  if (["chị", "chị họ"].includes(baseTerm)) return target.gender === "Nam" ? "anh rể" : "chị dâu";
-  if (baseTerm.startsWith("em")) return target.gender === "Nam" ? "em rể" : "em dâu";
-  if (baseTerm === "bác") return target.gender === "Nam" ? "bác rể" : "bác dâu";
-  if (baseTerm === "chú") return "thím";
-  if (baseTerm === "o" || baseTerm === "dì") return "dượng";
-  if (baseTerm === "cậu") return "mợ";
+  if (baseTerm.startsWith("Anh")) return target.gender === "Nam" ? "anh rể" : "chị dâu";
+  if (baseTerm.startsWith("Ả")) return target.gender === "Nam" ? "anh rể" : "chị dâu";
+  if (baseTerm.startsWith("Em")) return target.gender === "Nam" ? "em rể" : "em dâu";
+  if (baseTerm === "Bác / Bọ lớn") return target.gender === "Nam" ? "bác rể" : "bác dâu";
+  if (baseTerm === "Chú / Chú em") return "thím";
+  if (baseTerm === "O" || baseTerm === "Dì") return "dượng";
+  if (baseTerm === "Cậu") return "mợ";
   if (baseTerm === "con") return target.gender === "Nam" ? "con rể" : "con dâu";
   return `${baseTerm} bên dâu/rể`;
 }
@@ -1806,10 +1838,19 @@ function cleanGallery(value) {
 }
 
 function bindPublic() {
+  const openKinshipLookup = () => {
+    const people = sortedPeopleByRank();
+    state.kinshipPersonAId = state.kinshipPersonAId || people[0]?.id || "";
+    state.kinshipPersonBId = state.kinshipPersonBId || people[1]?.id || "";
+    state.kinshipOpen = true;
+    state.menuOpen = false;
+    renderPublic();
+  };
   $("#menuToggle")?.addEventListener("click", () => {
     state.menuOpen = !state.menuOpen;
     renderPublic();
   });
+  $("#kinshipFloatBtn")?.addEventListener("click", openKinshipLookup);
   $("#viewerLogoutBtn")?.addEventListener("click", logoutViewer);
   $("#searchInput")?.addEventListener("input", (event) => {
     state.query = event.target.value;
@@ -1837,14 +1878,7 @@ function bindPublic() {
       renderPublic();
     });
   });
-  $("#kinshipOpenBtn")?.addEventListener("click", () => {
-    const people = sortedPeopleByRank();
-    state.kinshipPersonAId = state.kinshipPersonAId || people[0]?.id || "";
-    state.kinshipPersonBId = state.kinshipPersonBId || people[1]?.id || "";
-    state.kinshipOpen = true;
-    state.menuOpen = false;
-    renderPublic();
-  });
+  $("#kinshipOpenBtn")?.addEventListener("click", openKinshipLookup);
   $("#exportExcelBtn")?.addEventListener("click", () => {
     exportExcel();
     state.menuOpen = true;
