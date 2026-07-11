@@ -322,6 +322,133 @@ a {
   font-size: 12px;
 }
 
+.viewer-suggestions {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.viewer-suggestion {
+  display: grid;
+  gap: 2px;
+  padding: 8px 9px;
+  border: 1px solid rgba(198, 146, 57, 0.38);
+  border-radius: 8px;
+  background: rgba(255, 253, 242, 0.92);
+  color: var(--ink);
+  text-align: left;
+}
+
+.viewer-suggestion:hover {
+  border-color: var(--accent);
+  background: var(--panel-2);
+}
+
+.viewer-suggestion strong {
+  font-size: 13px;
+}
+
+.viewer-suggestion span,
+.search-empty {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.tool-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.tool-action {
+  width: 100%;
+  min-height: 48px;
+}
+
+.kinship-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: grid;
+  place-items: center;
+  padding: 18px;
+}
+
+.kinship-backdrop {
+  position: absolute;
+  inset: 0;
+  border: 0;
+  background: rgba(43, 25, 12, 0.34);
+}
+
+.kinship-panel {
+  position: relative;
+  width: min(680px, calc(100vw - 32px));
+  max-height: min(760px, calc(100vh - 32px));
+  overflow: auto;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: rgba(255, 252, 235, 0.98);
+  box-shadow: 0 28px 80px rgba(53, 30, 13, 0.34);
+}
+
+.kinship-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(215, 170, 81, 0.55);
+}
+
+.kinship-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 4px;
+  color: var(--ink);
+}
+
+.kinship-head p,
+.kinship-answer span {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.kinship-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.kinship-result {
+  margin-top: 14px;
+  padding: 14px;
+  border: 1px solid rgba(198, 146, 57, 0.38);
+  border-radius: 8px;
+  background: linear-gradient(180deg, #fff9df, #fff0bd);
+}
+
+.kinship-answer {
+  display: grid;
+  gap: 8px;
+}
+
+.kinship-answer p {
+  margin: 0;
+  color: var(--ink);
+  font-weight: 800;
+}
+
+.kinship-answer b {
+  color: #8a321b;
+}
+
 .toolbar-actions {
   display: flex;
   flex: 0 0 auto;
@@ -1813,5 +1940,16 @@ th {
 
   .login-panel h2 {
     font-size: 22px;
+  }
+}
+
+@media (max-width: 560px) {
+  .kinship-fields {
+    grid-template-columns: 1fr;
+  }
+
+  .kinship-head {
+    align-items: stretch;
+    flex-direction: column;
   }
 }

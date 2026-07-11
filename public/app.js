@@ -19,6 +19,9 @@ const state = {
   menuOpen: false,
   editingId: "",
   adminQuery: "",
+  kinshipOpen: false,
+  kinshipPersonAId: "",
+  kinshipPersonBId: "",
   staticMode: false,
   touch: null,
 };
@@ -240,6 +243,8 @@ function icon(name) {
     deceased: '<circle cx="12" cy="12" r="10"></circle><path d="M8 8l8 8"></path><path d="M16 8l-8 8"></path>',
     order: '<path d="M8 6h13"></path><path d="M8 12h13"></path><path d="M8 18h13"></path><path d="M3 6h.01"></path><path d="M3 12h.01"></path><path d="M3 18h.01"></path>',
     menu: '<path d="M4 6h16"></path><path d="M4 12h16"></path><path d="M4 18h16"></path>',
+    users: '<circle cx="8" cy="8" r="3"></circle><circle cx="16" cy="8" r="3"></circle><path d="M3 19v-1a5 5 0 0 1 5-5"></path><path d="M21 19v-1a5 5 0 0 0-5-5"></path><path d="M11 14h2"></path>',
+    download: '<path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path>',
   };
   return `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || ""}</svg>`;
 }
@@ -972,6 +977,7 @@ function renderPublic() {
         ${state.view === "tree" ? renderTree() : renderList()}
       </main>
       ${state.selectedId ? renderDetail(state.selectedId) : ""}
+      ${state.kinshipOpen ? renderKinshipLookup() : ""}
       ${renderPhotoViewer()}
       <div id="toastRoot"></div>
     </div>
@@ -1002,6 +1008,7 @@ function renderViewerAuth() {
 }
 
 function renderControlMenu(stats) {
+  const suggestions = publicSearchResults().slice(0, 6);
   return `
     <section class="floating-tools ${state.menuOpen ? "open" : ""}">
       <button class="menu-toggle" id="menuToggle" type="button" title="Công cụ" aria-label="Công cụ">${icon("menu")}</button>
@@ -1010,8 +1017,18 @@ function renderControlMenu(stats) {
           <h3>Tìm kiếm</h3>
           <label class="searchbar compact-search">
             <span class="search-icon" title="Tìm kiếm">${icon("search")}</span>
-            <input id="searchInput" value="${esc(state.query)}" placeholder="Tên, địa chỉ, nghề nghiệp...">
+            <input id="searchInput" value="${esc(state.query)}" placeholder="Tên, địa chỉ, nghề nghiệp..." autocomplete="off">
           </label>
+          ${state.query.trim() ? `
+            <div class="viewer-suggestions">
+              ${suggestions.length ? suggestions.map((person) => `
+                <button class="viewer-suggestion" type="button" data-person-id="${esc(person.id)}">
+                  <strong>${esc(person.fullName)}</strong>
+                  <span>${esc([person.familyRole, childOrderText(person), formatDate(person.birthDate)].filter(Boolean).join(" · ") || "Chưa cập nhật")}</span>
+                </button>
+              `).join("") : `<p class="notice search-empty">Không thấy người phù hợp. Thử gỡ dấu hoặc nhập ít chữ hơn.</p>`}
+            </div>
+          ` : ""}
         </div>
         <div class="menu-section">
           <h3>Kiểu xem</h3>
@@ -1026,6 +1043,13 @@ function renderControlMenu(stats) {
             <button class="icon-btn" data-zoom="out" title="Thu nhỏ" aria-label="Thu nhỏ">${icon("minus")}</button>
             <button class="icon-btn" data-zoom="fit" title="Vừa khung" aria-label="Vừa khung">${icon("fit")}</button>
             <button class="icon-btn" data-zoom="in" title="Phóng to" aria-label="Phóng to">${icon("plus")}</button>
+          </div>
+        </div>
+        <div class="menu-section">
+          <h3>Công cụ</h3>
+          <div class="tool-grid">
+            <button class="icon-btn tool-action" id="kinshipOpenBtn" type="button" title="Tra cứu cách xưng hô" aria-label="Tra cứu cách xưng hô">${icon("users")}</button>
+            <button class="icon-btn tool-action" id="exportExcelBtn" type="button" title="Xuất Excel" aria-label="Xuất Excel">${icon("download")}</button>
           </div>
         </div>
         <div class="menu-section stats-menu">
@@ -1064,26 +1088,199 @@ function topbar(admin) {
 
 function personMatches(person) {
   if (!state.query.trim()) return true;
-  const haystack = normalizeText([
-    person.fullName,
-    person.gender,
-    person.familyRole,
-    person.birthDate,
-    person.deathDate,
-    person.marriageYear,
-    person.address,
-    person.hometown,
-    person.currentResidence,
-    person.daughterInLawFather,
-    person.daughterInLawMother,
-    person.daughterHusbandName,
-    person.daughterMarriedAddress,
-    person.daughterChildrenCount,
-    person.job,
-    person.notes,
-    ...(person.achievements || []),
-  ].join(" "));
-  return haystack.includes(normalizeText(state.query));
+  return adminSearchScore(person, state.query) > 0;
+}
+
+function publicSearchResults() {
+  const query = state.query.trim();
+  if (!query) return [];
+  return state.data.people
+    .map((person) => ({ person, score: adminSearchScore(person, query) }))
+    .filter((item) => item.score > 0)
+    .sort((a, b) => b.score - a.score || rankCompare(a.person, b.person))
+    .map((item) => item.person);
+}
+
+function sortedPeopleByRank() {
+  if (!state.data.people.length) return [];
+  const layout = buildLayout();
+  return state.data.people.slice().sort((a, b) => rankCompare(a, b, layout));
+}
+
+function rankCompare(a, b, layout = null) {
+  const positions = layout?.positions;
+  const posA = positions?.get(a.id);
+  const posB = positions?.get(b.id);
+  const genDiff = (posA?.gen ?? 999) - (posB?.gen ?? 999);
+  if (genDiff !== 0) return genDiff;
+  const xDiff = (posA?.x ?? 0) - (posB?.x ?? 0);
+  if (Math.abs(xDiff) > 1) return xDiff;
+  const birthDiff = birthSortValue(a) - birthSortValue(b);
+  if (birthDiff !== 0) return birthDiff;
+  return a.fullName.localeCompare(b.fullName, "vi");
+}
+
+function kinshipOptions(selectedId) {
+  return `<option value="">Chọn người</option>${sortedPeopleByRank().map((person) => `
+    <option value="${esc(person.id)}" ${person.id === selectedId ? "selected" : ""}>${esc(person.fullName)}${person.familyRole ? ` - ${esc(person.familyRole)}` : ""}</option>
+  `).join("")}`;
+}
+
+function renderKinshipLookup() {
+  const personA = personById(state.kinshipPersonAId);
+  const personB = personById(state.kinshipPersonBId);
+  const result = kinshipResult(personA, personB);
+  return `
+    <div class="kinship-modal" role="dialog" aria-modal="true" aria-label="Tra cứu cách xưng hô">
+      <button class="kinship-backdrop" id="closeKinshipBackdrop" type="button" aria-label="Đóng tra cứu"></button>
+      <section class="kinship-panel">
+        <div class="kinship-head">
+          <div>
+            <h2>${icon("users")}Tra cứu cách xưng hô</h2>
+            <p>Nhánh họ Nguyễn Hữu, ông Nguyễn Văn Hữu - Kỳ Văn, Kỳ Anh, Hà Tĩnh.</p>
+          </div>
+          <button class="ghost-btn" id="closeKinshipBtn" type="button">Đóng</button>
+        </div>
+        <div class="kinship-fields">
+          <div class="field"><label>Người thứ nhất</label><select id="kinshipPersonA">${kinshipOptions(state.kinshipPersonAId)}</select></div>
+          <div class="field"><label>Người thứ hai</label><select id="kinshipPersonB">${kinshipOptions(state.kinshipPersonBId)}</select></div>
+        </div>
+        <div class="kinship-result">
+          ${result}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function kinshipResult(personA, personB) {
+  if (!personA || !personB) return `<p class="notice">Chọn đủ hai người để xem cách xưng hô.</p>`;
+  if (personA.id === personB.id) return `<p><strong>${esc(personA.fullName)}</strong> là cùng một người.</p>`;
+  const termAB = kinshipTerm(personA, personB);
+  const termBA = kinshipTerm(personB, personA);
+  return `
+    <div class="kinship-answer">
+      <p><strong>${esc(personA.fullName)}</strong> nên gọi <strong>${esc(personB.fullName)}</strong> là <b>${esc(termAB)}</b>.</p>
+      <p><strong>${esc(personB.fullName)}</strong> nên gọi <strong>${esc(personA.fullName)}</strong> là <b>${esc(termBA)}</b>.</p>
+      <span>Gợi ý theo cách xưng hô gia đình Việt ở miền Trung/Hà Tĩnh; các gia đình có thể điều chỉnh theo tuổi và nếp gọi riêng.</span>
+    </div>
+  `;
+}
+
+function ancestorsOf(person) {
+  const result = new Map();
+  const visit = (id, depth) => {
+    if (!id || result.has(id)) return;
+    result.set(id, depth);
+    const current = personById(id);
+    if (!current) return;
+    visit(current.fatherId, depth + 1);
+    visit(current.motherId, depth + 1);
+  };
+  visit(person?.id, 0);
+  return result;
+}
+
+function kinshipTerm(speaker, target) {
+  if (!speaker || !target) return "chưa rõ";
+  if ((speaker.spouseIds || []).includes(target.id)) return target.gender === "Nam" ? "chồng" : "vợ";
+  const direct = bloodKinshipTerm(speaker, target);
+  if (direct) return direct;
+  for (const spouseId of target.spouseIds || []) {
+    const spouse = personById(spouseId);
+    const spouseTerm = bloodKinshipTerm(speaker, spouse);
+    if (spouseTerm) return inLawTerm(spouseTerm, target);
+  }
+  return "họ hàng trong nhánh Nguyễn Hữu";
+}
+
+function bloodKinshipTerm(speaker, target) {
+  if (!speaker || !target) return "";
+  const speakerAncestors = ancestorsOf(speaker);
+  const targetAncestors = ancestorsOf(target);
+  if (speakerAncestors.has(target.id)) return ancestorTerm(speakerAncestors.get(target.id), target.gender);
+  if (targetAncestors.has(speaker.id)) return descendantTerm(targetAncestors.get(speaker.id));
+  if (siblingKey(speaker) && siblingKey(speaker) === siblingKey(target)) return siblingTerm(speaker, target, "");
+
+  let best = null;
+  speakerAncestors.forEach((speakerDepth, ancestorId) => {
+    if (!targetAncestors.has(ancestorId) || ancestorId === speaker.id || ancestorId === target.id) return;
+    const targetDepth = targetAncestors.get(ancestorId);
+    const score = speakerDepth + targetDepth;
+    if (!best || score < best.score) best = { ancestorId, speakerDepth, targetDepth, score };
+  });
+  if (!best) return "";
+  if (best.speakerDepth === best.targetDepth) return siblingTerm(speaker, target, best.speakerDepth > 1 ? " họ" : "");
+  const diff = best.speakerDepth - best.targetDepth;
+  if (diff > 0) return collateralOlderTerm(speaker, target, best);
+  return collateralYoungerTerm(-diff);
+}
+
+function ancestorTerm(depth, gender) {
+  if (depth === 1) return gender === "Nam" ? "bố" : "mẹ";
+  if (depth === 2) return gender === "Nam" ? "ông" : "bà";
+  if (depth === 3) return gender === "Nam" ? "cụ ông" : "cụ bà";
+  if (depth === 4) return "kỵ";
+  return "cao tổ";
+}
+
+function descendantTerm(depth) {
+  if (depth === 1) return "con";
+  if (depth === 2) return "cháu";
+  if (depth === 3) return "chắt";
+  if (depth === 4) return "chút";
+  return "chít";
+}
+
+function siblingTerm(speaker, target, suffix) {
+  const speakerBirth = birthSortValue(speaker);
+  const targetBirth = birthSortValue(target);
+  const targetOlder = targetBirth < speakerBirth;
+  if (targetOlder) return `${target.gender === "Nam" ? "anh" : "chị"}${suffix}`;
+  if (targetBirth > speakerBirth) return `em${suffix}`;
+  return target.gender === "Nam" ? `anh/em${suffix}` : `chị/em${suffix}`;
+}
+
+function collateralOlderTerm(speaker, target, relation) {
+  if (relation.speakerDepth - relation.targetDepth >= 2) return target.gender === "Nam" ? "ông họ" : "bà họ";
+  const speakerParent = parentOnPath(speaker.id, relation.ancestorId);
+  const targetBirth = birthSortValue(target);
+  const parentBirth = birthSortValue(speakerParent || {});
+  const olderThanParent = targetBirth < parentBirth;
+  if (speakerParent?.gender === "Nữ") return target.gender === "Nam" ? "cậu" : "dì";
+  if (target.gender !== "Nam") return "o";
+  if (olderThanParent) return "bác";
+  return "chú";
+}
+
+function collateralYoungerTerm(depthDiff) {
+  if (depthDiff === 1) return "cháu";
+  if (depthDiff === 2) return "chắt";
+  return "chút/chít";
+}
+
+function parentOnPath(personId, ancestorId) {
+  let current = personById(personId);
+  while (current) {
+    const fatherAncestors = ancestorsOf(personById(current.fatherId));
+    if (fatherAncestors.has(ancestorId)) return personById(current.fatherId);
+    const motherAncestors = ancestorsOf(personById(current.motherId));
+    if (motherAncestors.has(ancestorId)) return personById(current.motherId);
+    break;
+  }
+  return null;
+}
+
+function inLawTerm(baseTerm, target) {
+  if (["anh", "anh họ"].includes(baseTerm)) return target.gender === "Nam" ? "anh rể" : "chị dâu";
+  if (["chị", "chị họ"].includes(baseTerm)) return target.gender === "Nam" ? "anh rể" : "chị dâu";
+  if (baseTerm.startsWith("em")) return target.gender === "Nam" ? "em rể" : "em dâu";
+  if (baseTerm === "bác") return target.gender === "Nam" ? "bác rể" : "bác dâu";
+  if (baseTerm === "chú") return "thím";
+  if (baseTerm === "o" || baseTerm === "dì") return "dượng";
+  if (baseTerm === "cậu") return "mợ";
+  if (baseTerm === "con") return target.gender === "Nam" ? "con rể" : "con dâu";
+  return `${baseTerm} bên dâu/rể`;
 }
 
 function rangesOverlap(a, b, gap = 0) {
@@ -1403,7 +1600,8 @@ function renderTree() {
 }
 
 function filteredPeople() {
-  return state.data.people.filter(personMatches).sort((a, b) => a.fullName.localeCompare(b.fullName, "vi"));
+  const ranked = sortedPeopleByRank();
+  return ranked.filter(personMatches);
 }
 
 function renderList() {
@@ -1441,6 +1639,59 @@ function renderList() {
       </div>
     </section>
   `;
+}
+
+function exportExcel() {
+  const rows = sortedPeopleByRank();
+  const headers = [
+    "STT",
+    "Họ tên",
+    "Giới tính",
+    "Vai trò",
+    "Thứ tự",
+    "Trạng thái",
+    "Ngày sinh",
+    "Ngày mất",
+    "Năm lập gia đình",
+    "Bố",
+    "Mẹ",
+    "Vợ/chồng",
+    "Quê quán",
+    "Đang ở",
+    "Nghề nghiệp",
+    "Thành tích",
+  ];
+  const cell = (value) => `<td>${esc(value)}</td>`;
+  const body = rows.map((person, index) => {
+    const status = lifeStatus(person);
+    const spouses = (person.spouseIds || []).map((id) => personById(id)?.fullName).filter(Boolean).join(", ");
+    return `<tr>${[
+      index + 1,
+      person.fullName,
+      person.gender,
+      person.familyRole,
+      childOrderText(person),
+      status.label,
+      formatDate(person.birthDate),
+      formatDate(person.deathDate),
+      marriageYearFor(person),
+      personById(person.fatherId)?.fullName || "",
+      personById(person.motherId)?.fullName || "",
+      spouses,
+      person.hometown,
+      personResidence(person),
+      person.job,
+      (person.achievements || []).join("; "),
+    ].map(cell).join("")}</tr>`;
+  }).join("");
+  const html = `<!doctype html><html><head><meta charset="utf-8"></head><body><table border="1"><thead><tr>${headers.map((item) => `<th>${esc(item)}</th>`).join("")}</tr></thead><tbody>${body}</tbody></table></body></html>`;
+  const blob = new Blob(["\ufeff", html], { type: "application/vnd.ms-excel;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "gia-pha-nguyen-huu.xls";
+  link.click();
+  URL.revokeObjectURL(url);
 }
 
 function renderDetail(id) {
@@ -1563,6 +1814,55 @@ function bindPublic() {
   $("#searchInput")?.addEventListener("input", (event) => {
     state.query = event.target.value;
     state.menuOpen = true;
+    renderPublic();
+    const input = $("#searchInput");
+    if (input) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  });
+  $("#searchInput")?.addEventListener("keydown", (event) => {
+    if (event.key !== "Enter") return;
+    const firstSuggestion = $(".viewer-suggestion");
+    if (!firstSuggestion) return;
+    event.preventDefault();
+    state.selectedId = firstSuggestion.dataset.personId;
+    state.menuOpen = false;
+    renderPublic();
+  });
+  $$(".viewer-suggestion").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.selectedId = button.dataset.personId;
+      state.menuOpen = false;
+      renderPublic();
+    });
+  });
+  $("#kinshipOpenBtn")?.addEventListener("click", () => {
+    const people = sortedPeopleByRank();
+    state.kinshipPersonAId = state.kinshipPersonAId || people[0]?.id || "";
+    state.kinshipPersonBId = state.kinshipPersonBId || people[1]?.id || "";
+    state.kinshipOpen = true;
+    state.menuOpen = false;
+    renderPublic();
+  });
+  $("#exportExcelBtn")?.addEventListener("click", () => {
+    exportExcel();
+    state.menuOpen = true;
+  });
+  $("#closeKinshipBtn")?.addEventListener("click", () => {
+    state.kinshipOpen = false;
+    renderPublic();
+  });
+  $("#closeKinshipBackdrop")?.addEventListener("click", () => {
+    state.kinshipOpen = false;
+    renderPublic();
+  });
+  $("#kinshipPersonA")?.addEventListener("change", (event) => {
+    state.kinshipPersonAId = event.target.value;
+    renderPublic();
+  });
+  $("#kinshipPersonB")?.addEventListener("change", (event) => {
+    state.kinshipPersonBId = event.target.value;
     renderPublic();
   });
   $$(".segmented button").forEach((button) => {
@@ -1850,6 +2150,8 @@ function adminSearchText(person) {
     person.daughterHusbandName,
     person.daughterMarriedAddress,
     person.daughterChildrenCount,
+    person.notes,
+    ...(person.achievements || []),
   ].join(" ");
 }
 
