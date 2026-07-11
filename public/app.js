@@ -829,6 +829,43 @@ function buildLayout() {
       relationChildGroups(childPeople).forEach((group) => shiftGroup(group, delta));
     });
   };
+  const enforceRelationOrder = () => {
+    Array.from(groupsByGen.keys()).sort((a, b) => a - b).forEach((gen) => {
+      if (gen === firstGen) return;
+      const blocks = [];
+      relationChildren.forEach((childPeople, key) => {
+        const childGen = Math.min(...childPeople.map((child) => generation.get(child.id) ?? 0));
+        if (childGen !== gen) return;
+        const target = parentCenterForKey(key);
+        if (target === null) return;
+        const groups = relationChildGroups(childPeople);
+        const bounds = groups.map(groupBounds).filter(Boolean);
+        if (!bounds.length) return;
+        blocks.push({
+          key,
+          groups,
+          target,
+          minX: Math.min(...bounds.map((item) => item.minX)),
+          maxX: Math.max(...bounds.map((item) => item.maxX)),
+        });
+      });
+      blocks.sort((a, b) => a.target - b.target || a.minX - b.minX);
+      let cursor = PADDING;
+      const relationGap = Math.max(GROUP_GAP, CARD_W * 0.42);
+      blocks.forEach((block) => {
+        const width = block.maxX - block.minX;
+        const desiredMin = block.target - width / 2;
+        const nextMin = Math.max(desiredMin, cursor);
+        const delta = nextMin - block.minX;
+        if (Math.abs(delta) > 0.5) {
+          block.groups.forEach((group) => shiftGroup(group, delta));
+          block.minX += delta;
+          block.maxX += delta;
+        }
+        cursor = block.maxX + relationGap;
+      });
+    });
+  };
   const resolveLowerCollisions = () => {
     const gap = Math.max(12, Math.round(GROUP_GAP * 0.2));
     Array.from(groupsByGen.keys()).sort((a, b) => a - b).forEach((gen) => {
@@ -849,7 +886,8 @@ function buildLayout() {
       }
     });
   };
-  for (let pass = 0; pass < 4; pass++) {
+  for (let pass = 0; pass < 5; pass++) {
+    enforceRelationOrder();
     alignLowerRelations();
     resolveLowerCollisions();
   }
@@ -1317,7 +1355,7 @@ function renderTree() {
 
   return `
     <section class="tree-viewport" id="treeViewport">
-      <div class="tree-canvas" id="treeCanvas" data-min-x="${layout.contentBounds.minX}" data-min-y="${layout.contentBounds.minY}" data-max-x="${layout.contentBounds.maxX}" data-max-y="${layout.contentBounds.maxY}" style="width:${layout.width}px;height:${layout.height}px;--card-w:${layout.cardW}px;--card-h:${layout.cardH}px;--photo-w:${layout.photoW}px;--photo-h:${layout.photoH}px">
+      <div class="tree-canvas" id="treeCanvas" data-axis-x="${layout.axisX}" data-min-x="${layout.contentBounds.minX}" data-min-y="${layout.contentBounds.minY}" data-max-x="${layout.contentBounds.maxX}" data-max-y="${layout.contentBounds.maxY}" style="width:${layout.width}px;height:${layout.height}px;--card-w:${layout.cardW}px;--card-h:${layout.cardH}px;--photo-w:${layout.photoW}px;--photo-h:${layout.photoH}px">
         <svg class="tree-lines" width="${layout.width}" height="${layout.height}" viewBox="0 0 ${layout.width} ${layout.height}">
           <defs>
             <marker id="arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
@@ -1660,7 +1698,8 @@ function fitTreeToViewport() {
   const minY = Number(canvas.dataset.minY || 0);
   const maxX = Number(canvas.dataset.maxX || canvas.offsetWidth || 1);
   const maxY = Number(canvas.dataset.maxY || canvas.offsetHeight || 1);
-  const contentW = Math.max(1, maxX - minX);
+  const axisX = Number(canvas.dataset.axisX || (minX + maxX) / 2);
+  const contentW = Math.max(1, Math.max(axisX - minX, maxX - axisX) * 2);
   const contentH = Math.max(1, maxY - minY);
   const padX = Math.min(140, Math.max(36, viewport.clientWidth * 0.08));
   const padY = Math.min(110, Math.max(28, viewport.clientHeight * 0.08));
@@ -1670,7 +1709,7 @@ function fitTreeToViewport() {
   );
   state.scale = fitScale;
   state.pan = {
-    x: viewport.clientWidth / 2 - ((minX + maxX) / 2) * fitScale,
+    x: viewport.clientWidth / 2 - axisX * fitScale,
     y: viewport.clientHeight / 2 - ((minY + maxY) / 2) * fitScale,
   };
 }
