@@ -850,20 +850,33 @@ function buildLayout() {
         });
       });
       blocks.sort((a, b) => a.target - b.target || a.minX - b.minX);
-      let cursor = PADDING;
       const relationGap = Math.max(GROUP_GAP, CARD_W * 0.42);
-      blocks.forEach((block) => {
-        const width = block.maxX - block.minX;
-        const desiredMin = block.target - width / 2;
-        const nextMin = Math.max(desiredMin, cursor);
+      const blockWidth = (block) => block.maxX - block.minX;
+      const moveBlock = (block, nextMin) => {
         const delta = nextMin - block.minX;
-        if (Math.abs(delta) > 0.5) {
-          block.groups.forEach((group) => shiftGroup(group, delta));
-          block.minX += delta;
-          block.maxX += delta;
-        }
-        cursor = block.maxX + relationGap;
-      });
+        if (Math.abs(delta) <= 0.5) return;
+        block.groups.forEach((group) => shiftGroup(group, delta));
+        block.minX += delta;
+        block.maxX += delta;
+      };
+      const shouldCenterRow = gen <= firstGen + 2 || blocks.length >= 5;
+      if (shouldCenterRow) {
+        const totalWidth = blocks.reduce((sum, block) => sum + blockWidth(block), 0)
+          + relationGap * Math.max(0, blocks.length - 1);
+        let cursor = axisX - totalWidth / 2;
+        blocks.forEach((block) => {
+          moveBlock(block, cursor);
+          cursor = block.maxX + relationGap;
+        });
+        return;
+      }
+      blocks.forEach((block) => moveBlock(block, block.target - blockWidth(block) / 2));
+      for (let index = 1; index < blocks.length; index++) {
+        const previous = blocks[index - 1];
+        const current = blocks[index];
+        const overlap = previous.maxX + relationGap - current.minX;
+        if (overlap > 0) moveBlock(current, current.minX + overlap);
+      }
     });
   };
   const resolveLowerCollisions = () => {
@@ -890,6 +903,18 @@ function buildLayout() {
     enforceRelationOrder();
     alignLowerRelations();
     resolveLowerCollisions();
+  }
+  const descendantPositions = Array.from(positions.values()).filter((position) => position.gen !== firstGen);
+  if (descendantPositions.length) {
+    const descendantMinX = Math.min(...descendantPositions.map((position) => position.x));
+    const descendantMaxX = Math.max(...descendantPositions.map((position) => position.x + position.w));
+    const descendantCenter = (descendantMinX + descendantMaxX) / 2;
+    const delta = axisX - descendantCenter;
+    if (Math.abs(delta) > 1) {
+      positions.forEach((position) => {
+        if (position.gen !== firstGen) position.x += delta;
+      });
+    }
   }
   const finalMinX = Math.min(...Array.from(positions.values()).map((position) => position.x), PADDING);
   if (finalMinX < PADDING) {
