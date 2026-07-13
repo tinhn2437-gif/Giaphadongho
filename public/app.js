@@ -19,11 +19,15 @@ const state = {
   menuOpen: false,
   editingId: "",
   adminQuery: "",
+  honorFilter: "all",
   kinshipOpen: false,
   kinshipPersonAId: "",
   kinshipPersonBId: "",
   staticMode: false,
   touch: null,
+  personIndex: new Map(),
+  layoutCache: null,
+  viewerSessionError: "",
 };
 
 const emptyPerson = {
@@ -43,6 +47,8 @@ const emptyPerson = {
   daughterChildrenCount: "",
   address: "",
   job: "",
+  educationLevel: "",
+  academicTitle: "",
   achievements: [],
   fatherId: "",
   motherId: "",
@@ -52,21 +58,42 @@ const emptyPerson = {
   notes: "",
 };
 
+const EDUCATION_LEVELS = ["Phổ thông", "Cao đẳng", "Đại học"];
+const ACADEMIC_TITLES = ["Thạc sĩ", "Tiến sĩ", "PGS", "GS"];
+
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
 const app = $("#app");
 
 async function api(path, options = {}) {
-  let response;
-  try {
-    response = await fetch(path, {
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-      ...options,
-    });
-  } catch (error) {
-    throw new Error("Không kết nối được máy chủ. Hãy kiểm tra mạng rồi thử lại.");
+  const { timeoutMs, ...requestOptions } = options;
+  const method = String(requestOptions.method || "GET").toUpperCase();
+  const attempts = method === "GET" ? 2 : 1;
+  let response = null;
+  let lastError = null;
+
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs || (method === "GET" ? 15000 : 45000));
+    try {
+      response = await fetch(path, {
+        credentials: "same-origin",
+        headers: { "Content-Type": "application/json", ...(requestOptions.headers || {}) },
+        ...requestOptions,
+        signal: controller.signal,
+      });
+      if (![502, 503, 504].includes(response.status) || attempt === attempts - 1) break;
+    } catch (error) {
+      lastError = error;
+      if (attempt === attempts - 1) {
+        if (error?.name === "AbortError") throw new Error("Máy chủ phản hồi quá lâu. Hãy thử lại sau ít phút.");
+        throw new Error("Không kết nối được máy chủ. Hãy kiểm tra mạng rồi thử lại.");
+      }
+    } finally {
+      clearTimeout(timer);
+    }
   }
+  if (!response) throw lastError || new Error("Không kết nối được máy chủ.");
   if (response.status === 204) return null;
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -77,17 +104,28 @@ async function api(path, options = {}) {
   return data;
 }
 
+function allowsStaticFallback() {
+  return location.protocol === "file:" || ["localhost", "127.0.0.1"].includes(location.hostname);
+}
+
+function rebuildPersonIndex() {
+  state.personIndex = new Map((state.data.people || []).map((person) => [person.id, person]));
+  state.layoutCache = null;
+}
+
 async function loadData() {
   try {
     state.data = await api("/api/people");
     state.staticMode = false;
   } catch (error) {
+    if (!allowsStaticFallback()) throw error;
     const response = await fetch("family.json", { cache: "no-store" });
     if (!response.ok) throw error;
     state.data = await response.json();
     state.staticMode = true;
     state.isAdmin = false;
   }
+  rebuildPersonIndex();
   if (!state.editingId && state.data.people[0]) state.editingId = state.data.people[0].id;
 }
 
@@ -105,10 +143,18 @@ async function loadViewerSession() {
     state.staticMode = false;
     state.viewerAuthenticated = !!session.authenticated;
     state.viewerUser = session.user || null;
+    state.viewerSessionError = "";
   } catch (error) {
-    state.staticMode = true;
-    state.viewerUser = staticViewerUser();
-    state.viewerAuthenticated = !!state.viewerUser;
+    if (allowsStaticFallback()) {
+      state.staticMode = true;
+      state.viewerUser = staticViewerUser();
+      state.viewerAuthenticated = !!state.viewerUser;
+    } else {
+      state.staticMode = false;
+      state.viewerUser = null;
+      state.viewerAuthenticated = false;
+      state.viewerSessionError = error.message;
+    }
   }
 }
 
@@ -132,7 +178,9 @@ async function loadStorageStats() {
 }
 
 function personById(id) {
-  return state.data.people.find((person) => person.id === id);
+  if (!id) return undefined;
+  if (state.personIndex.size !== (state.data.people || []).length) rebuildPersonIndex();
+  return state.personIndex.get(id);
 }
 
 function normalizeText(value) {
@@ -245,6 +293,7 @@ function icon(name) {
     menu: '<path d="M4 6h16"></path><path d="M4 12h16"></path><path d="M4 18h16"></path>',
     users: '<circle cx="8" cy="8" r="3"></circle><circle cx="16" cy="8" r="3"></circle><path d="M3 19v-1a5 5 0 0 1 5-5"></path><path d="M21 19v-1a5 5 0 0 0-5-5"></path><path d="M11 14h2"></path>',
     download: '<path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path>',
+    award: '<circle cx="12" cy="8" r="6"></circle><path d="M15.5 13 17 22l-5-3-5 3 1.5-9"></path><path d="m9.5 8 1.6 1.6L14.8 6"></path>',
   };
   return `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || ""}</svg>`;
 }
@@ -263,7 +312,7 @@ function photoHtml(person, className = "person-photo") {
   if (person.photo) {
     return `
       <button class="photo-button" data-photo-person-id="${esc(person.id)}" type="button" title="Xem ảnh ${esc(person.fullName)}" aria-label="Xem ảnh ${esc(person.fullName)}">
-        <img class="${className}" src="${esc(assetUrl(person.photo))}" alt="${esc(person.fullName)}">
+        <img class="${className}" src="${esc(assetUrl(person.photo))}" alt="${esc(person.fullName)}" loading="lazy" decoding="async">
       </button>
     `;
   }
@@ -395,6 +444,7 @@ function getStats() {
 
 function buildLayout() {
   const people = state.data.people;
+  if (state.layoutCache?.people === people) return state.layoutCache.value;
   const byId = new Map(people.map((person) => [person.id, person]));
   const children = new Map();
   people.forEach((person) => {
@@ -951,7 +1001,7 @@ function buildLayout() {
   contentBounds.maxX = axisX + balanceRadius;
   maxX = Math.max(maxX, contentBounds.maxX);
 
-  return {
+  const result = {
     byId,
     children,
     positions,
@@ -965,6 +1015,14 @@ function buildLayout() {
     width: Math.max(maxX + PADDING, 900),
     height: Math.max(maxY + PADDING, 600),
   };
+  state.layoutCache = { people, value: result };
+  return result;
+}
+
+function selectOptions(values, selected, emptyLabel = "Chưa cập nhật") {
+  return `<option value="">${esc(emptyLabel)}</option>${values.map((value) => `
+    <option value="${esc(value)}" ${selected === value ? "selected" : ""}>${esc(value === "PGS" ? "Phó Giáo sư (PGS)" : value === "GS" ? "Giáo sư (GS)" : value)}</option>
+  `).join("")}`;
 }
 
 function renderPublic() {
@@ -974,8 +1032,9 @@ function renderPublic() {
       ${topbar(false)}
       <main class="workspace">
         ${renderControlMenu(stats)}
-        ${state.view === "tree" ? renderTree() : renderList()}
+        ${state.view === "tree" ? renderTree() : state.view === "list" ? renderList() : renderHonorBoard()}
       </main>
+      ${renderViewSwitchFloatButton()}
       ${renderKinshipFloatButton()}
       ${state.selectedId ? renderDetail(state.selectedId) : ""}
       ${state.kinshipOpen ? renderKinshipLookup() : ""}
@@ -995,6 +1054,7 @@ function renderViewerAuth() {
         <form class="login-panel viewer-login-panel" id="viewerAuthForm">
           <h2>Đăng nhập xem gia phả</h2>
           <p class="notice">Tài khoản xem gia phả do admin tạo. Để đăng nhập, hãy liên hệ cháu Nguyễn Văn Tình 0382967057 để lấy tài khoản và mật khẩu đăng nhập.</p>
+          ${state.viewerSessionError ? `<p class="notice login-warning">${esc(state.viewerSessionError)}</p>` : ""}
           <div class="field"><label>Tài khoản</label><input name="username" autocomplete="username" required></div>
           <div class="field"><label>Mật khẩu</label><input name="password" type="password" autocomplete="current-password" required></div>
           <div class="form-actions">
@@ -1036,16 +1096,17 @@ function renderControlMenu(stats) {
           <div class="segmented">
             <button class="icon-btn ${state.view === "tree" ? "active" : ""}" data-view="tree" title="Sơ đồ" aria-label="Sơ đồ">${icon("tree")}</button>
             <button class="icon-btn ${state.view === "list" ? "active" : ""}" data-view="list" title="Danh sách" aria-label="Danh sách">${icon("list")}</button>
+            <button class="icon-btn ${state.view === "honor" ? "active" : ""}" data-view="honor" title="Bảng vàng vinh danh" aria-label="Bảng vàng vinh danh">${icon("award")}</button>
           </div>
         </div>
-        <div class="menu-section">
+        ${state.view === "tree" ? `<div class="menu-section">
           <h3>Thu phóng</h3>
           <div class="zoom-controls">
             <button class="icon-btn" data-zoom="out" title="Thu nhỏ" aria-label="Thu nhỏ">${icon("minus")}</button>
             <button class="icon-btn" data-zoom="fit" title="Vừa khung" aria-label="Vừa khung">${icon("fit")}</button>
             <button class="icon-btn" data-zoom="in" title="Phóng to" aria-label="Phóng to">${icon("plus")}</button>
           </div>
-        </div>
+        </div>` : ""}
         <div class="menu-section">
           <h3>Công cụ</h3>
           <div class="tool-grid">
@@ -1062,6 +1123,17 @@ function renderControlMenu(stats) {
         <div class="menu-section menu-help">Kéo để di chuyển, chụm hai ngón để thu phóng, hoặc dùng nút mũi tên.</div>
       </div>
     </section>
+  `;
+}
+
+function renderViewSwitchFloatButton() {
+  const showingHonor = state.view === "honor";
+  const label = showingHonor ? "Trở về gia phả" : "Mở Bảng vàng vinh danh";
+  return `
+    <button class="view-switch-fab" id="viewSwitchFloatBtn" type="button" title="${label}" aria-label="${label}">
+      ${icon(showingHonor ? "tree" : "award")}
+      <span>${label}</span>
+    </button>
   `;
 }
 
@@ -1171,7 +1243,7 @@ function kinshipResult(personA, personB) {
     <div class="kinship-answer">
       <p><strong>${esc(personA.fullName)}</strong> gọi <strong>${esc(personB.fullName)}</strong> là <b>${esc(speechAB.call)}</b>, xưng <b>${esc(speechAB.self)}</b>.</p>
       <p><strong>${esc(personB.fullName)}</strong> gọi <strong>${esc(personA.fullName)}</strong> là <b>${esc(speechBA.call)}</b>, xưng <b>${esc(speechBA.self)}</b>.</p>
-      <span>Cách gọi được suy ra theo nhánh bố/mẹ và quan hệ vợ chồng: vợ của bác gọi “Bác”, vợ của chú gọi “Mự”. Cách xưng luôn dùng đúng vai như Con, Cháu, Anh, Chị hoặc Em.</span>
+      <span>Cách gọi được suy ra theo nhánh bố/mẹ và quan hệ vợ chồng: vợ của bác gọi “Bác”, vợ của chú gọi “Mự”; người ngang hàng với ông/bà gọi “Ông/Bà” và xưng “Cháu”.</span>
     </div>
   `;
 }
@@ -1291,7 +1363,11 @@ function siblingTerm(speaker, target, suffix) {
 }
 
 function collateralOlderTerm(speaker, target, relation) {
-  if (relation.speakerDepth - relation.targetDepth >= 2) return target.gender === "Nam" ? "ông họ" : "bà họ";
+  const generationGap = relation.speakerDepth - relation.targetDepth;
+  if (generationGap === 2) return target.gender === "Nam" ? "Ông" : "Bà";
+  if (generationGap === 3) return "Cố";
+  if (generationGap === 4) return "Kỵ";
+  if (generationGap > 4) return "Cao tổ";
   const speakerParent = parentOnPath(speaker.id, relation.ancestorId);
   const targetBirth = birthSortValue(target);
   const parentBirth = birthSortValue(speakerParent || {});
@@ -1303,9 +1379,10 @@ function collateralOlderTerm(speaker, target, relation) {
 }
 
 function collateralYoungerTerm(depthDiff) {
-  if (depthDiff === 1) return "cháu";
-  if (depthDiff === 2) return "chắt";
-  return "chút/chít";
+  if (depthDiff <= 2) return "cháu";
+  if (depthDiff === 3) return "chắt";
+  if (depthDiff === 4) return "chút";
+  return "chít";
 }
 
 function parentOnPath(personId, ancestorId) {
@@ -1686,6 +1763,8 @@ function renderList() {
         <td>${esc(person.hometown || "")}</td>
         <td>${esc(personResidence(person))}</td>
         <td>${esc(person.job || "")}</td>
+        <td>${esc(person.educationLevel || "")}</td>
+        <td>${esc(person.academicTitle || "")}</td>
         <td>${esc((person.achievements || []).join("; "))}</td>
       </tr>
     `;
@@ -1695,10 +1774,121 @@ function renderList() {
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Họ tên</th><th>Vai trò</th><th>Thứ tự</th><th>Trạng thái</th><th>Ngày sinh</th><th>Năm lập gia đình</th><th>Bố mẹ / bên chồng</th><th>Vợ/chồng</th><th>Quê quán</th><th>Đang ở</th><th>Nghề nghiệp</th><th>Thành tích</th></tr>
+            <tr><th>Họ tên</th><th>Vai trò</th><th>Thứ tự</th><th>Trạng thái</th><th>Ngày sinh</th><th>Năm lập gia đình</th><th>Bố mẹ / bên chồng</th><th>Vợ/chồng</th><th>Quê quán</th><th>Đang ở</th><th>Nghề nghiệp</th><th>Trình độ</th><th>Học hàm/học vị</th><th>Thành tích</th></tr>
           </thead>
-          <tbody>${rows || `<tr><td colspan="12">Không tìm thấy người phù hợp.</td></tr>`}</tbody>
+          <tbody>${rows || `<tr><td colspan="14">Không tìm thấy người phù hợp.</td></tr>`}</tbody>
         </table>
+      </div>
+    </section>
+  `;
+}
+
+const ACADEMIC_TITLE_SCORE = { GS: 60000, PGS: 50000, "Tiến sĩ": 40000, "Thạc sĩ": 30000 };
+const EDUCATION_LEVEL_SCORE = { "Đại học": 2000, "Cao đẳng": 1000, "Phổ thông": 100 };
+
+function isHonoree(person) {
+  return ["Cao đẳng", "Đại học"].includes(person.educationLevel)
+    || Boolean(person.academicTitle)
+    || (person.achievements || []).length > 0;
+}
+
+function honorScore(person) {
+  return (ACADEMIC_TITLE_SCORE[person.academicTitle] || 0)
+    + (EDUCATION_LEVEL_SCORE[person.educationLevel] || 0)
+    + Math.min((person.achievements || []).length, 20);
+}
+
+function honorFilterMatches(person) {
+  if (state.honorFilter === "academic") return Boolean(person.academicTitle);
+  if (state.honorFilter === "education") return ["Cao đẳng", "Đại học"].includes(person.educationLevel);
+  if (state.honorFilter === "award") return (person.achievements || []).length > 0;
+  return true;
+}
+
+function sortedHonorees() {
+  return state.data.people
+    .filter(isHonoree)
+    .sort((a, b) => honorScore(b) - honorScore(a)
+      || (b.achievements || []).length - (a.achievements || []).length
+      || birthSortValue(a) - birthSortValue(b)
+      || a.fullName.localeCompare(b.fullName, "vi"));
+}
+
+function honorSummaryLabel(person) {
+  return person.academicTitle || person.educationLevel || "Thành tích tiêu biểu";
+}
+
+function renderHonorBoard() {
+  const allHonorees = sortedHonorees();
+  const honorees = allHonorees.filter(honorFilterMatches).filter(personMatches);
+  const academicCount = allHonorees.filter((person) => person.academicTitle).length;
+  const graduateCount = allHonorees.filter((person) => ["Cao đẳng", "Đại học"].includes(person.educationLevel)).length;
+  const awardCount = allHonorees.filter((person) => (person.achievements || []).length).length;
+
+  return `
+    <section class="honor-board">
+      <header class="honor-banner">
+        <div class="honor-emblem">${icon("award")}</div>
+        <div class="honor-heading">
+          <p>Nhánh họ Nguyễn Hữu · Kỳ Văn, Kỳ Anh, Hà Tĩnh</p>
+          <h2>Bảng vàng hiếu học và thành tích</h2>
+          <span>Trân trọng ghi nhận những người con đã nỗ lực học tập, lao động và đóng góp cho gia đình, quê hương.</span>
+        </div>
+        <div class="honor-stats" aria-label="Thống kê bảng vàng">
+          <div><strong>${allHonorees.length}</strong><span>Người được ghi nhận</span></div>
+          <div><strong>${academicCount}</strong><span>Học hàm, học vị</span></div>
+          <div><strong>${graduateCount}</strong><span>Cao đẳng, đại học</span></div>
+          <div><strong>${awardCount}</strong><span>Có giải thưởng</span></div>
+        </div>
+      </header>
+
+      <div class="honor-toolbar">
+        <label class="searchbar honor-search">
+          <span class="search-icon" title="Tìm kiếm">${icon("search")}</span>
+          <input id="honorSearchInput" value="${esc(state.query)}" placeholder="Tìm theo tên, nghề nghiệp, trình độ, thành tích..." autocomplete="off">
+        </label>
+        <label class="honor-filter-label">
+          <span>Nhóm vinh danh</span>
+          <select id="honorFilter">
+            <option value="all" ${state.honorFilter === "all" ? "selected" : ""}>Tất cả</option>
+            <option value="academic" ${state.honorFilter === "academic" ? "selected" : ""}>Học hàm, học vị</option>
+            <option value="education" ${state.honorFilter === "education" ? "selected" : ""}>Cao đẳng, đại học</option>
+            <option value="award" ${state.honorFilter === "award" ? "selected" : ""}>Giải thưởng, thành tích</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="honor-grid">
+        ${honorees.length ? honorees.map((person) => {
+          const overallRank = allHonorees.findIndex((item) => item.id === person.id) + 1;
+          const achievements = person.achievements || [];
+          return `
+            <article class="honor-card" data-person-id="${esc(person.id)}" role="button" tabindex="0">
+              <div class="honor-card-top">
+                <span class="honor-rank" title="Thứ tự theo cấp độ">${overallRank}</span>
+                ${photoHtml(person, "honor-photo")}
+                <div class="honor-identity">
+                  <span class="honor-level">${esc(honorSummaryLabel(person))}</span>
+                  <h3>${esc(person.fullName)}</h3>
+                  <p>${esc(formatDate(person.birthDate) ? `Sinh ${formatDate(person.birthDate)}` : "Chưa cập nhật năm sinh")}</p>
+                </div>
+              </div>
+              <dl class="honor-details">
+                <div><dt>Trình độ</dt><dd>${esc(person.educationLevel || "Chưa cập nhật")}</dd></div>
+                <div><dt>Học hàm/học vị</dt><dd>${esc(person.academicTitle || "Chưa cập nhật")}</dd></div>
+                <div><dt>Nghề nghiệp</dt><dd>${esc(person.job || "Chưa cập nhật")}</dd></div>
+              </dl>
+              ${achievements.length ? `<div class="honor-achievements"><strong>${icon("award")}Thành tích</strong>${achievements.slice(0, 3).map((item) => `<span>${esc(item)}</span>`).join("")}${achievements.length > 3 ? `<small>+${achievements.length - 3} thành tích khác</small>` : ""}</div>` : ""}
+              ${person.notes ? `<p class="honor-note">${esc(person.notes)}</p>` : ""}
+            </article>
+          `;
+        }).join("") : `
+          <div class="honor-empty">
+            ${icon("award")}
+            <h3>Chưa có người phù hợp</h3>
+            <p>Thông tin sẽ xuất hiện khi Admin cập nhật trình độ, học hàm/học vị hoặc thành tích.</p>
+          </div>
+        `}
       </div>
     </section>
   `;
@@ -1722,6 +1912,8 @@ function exportExcel() {
     "Quê quán",
     "Đang ở",
     "Nghề nghiệp",
+    "Trình độ",
+    "Học hàm/học vị",
     "Thành tích",
   ];
   const cell = (value) => `<td>${esc(value)}</td>`;
@@ -1744,6 +1936,8 @@ function exportExcel() {
       person.hometown,
       personResidence(person),
       person.job,
+      person.educationLevel,
+      person.academicTitle,
       (person.achievements || []).join("; "),
     ].map(cell).join("")}</tr>`;
   }).join("");
@@ -1819,6 +2013,8 @@ function renderDetail(id) {
           <dt>Quê quán</dt><dd>${esc(person.hometown || "Chưa cập nhật")}</dd>
           <dt>Đang ở</dt><dd>${esc(personResidence(person) || "Chưa cập nhật")}</dd>
           <dt>Nghề nghiệp</dt><dd>${esc(person.job || "Chưa cập nhật")}</dd>
+          <dt>Trình độ</dt><dd>${esc(person.educationLevel || "Chưa cập nhật")}</dd>
+          <dt>Học hàm/học vị</dt><dd>${esc(person.academicTitle || "Chưa cập nhật")}</dd>
           <dt>Thành tích</dt><dd>${(person.achievements || []).length ? `<div class="chips">${person.achievements.map((item) => `<span class="chip">${esc(item)}</span>`).join("")}</div>` : "Chưa cập nhật"}</dd>
           <dt>Ghi chú</dt><dd>${esc(person.notes || "Không có")}</dd>
         </dl>
@@ -1828,7 +2024,7 @@ function renderDetail(id) {
             <div class="gallery-grid">
               ${galleryPhotos.map((url, index) => `
                 <button class="gallery-photo" data-photo-url="${esc(assetUrl(url))}" data-photo-title="${esc(`${person.fullName} - ảnh ${index + 1}`)}" type="button">
-                  <img src="${esc(assetUrl(url))}" alt="${esc(`${person.fullName} ảnh ${index + 1}`)}">
+                  <img src="${esc(assetUrl(url))}" alt="${esc(`${person.fullName} ảnh ${index + 1}`)}" loading="lazy" decoding="async">
                 </button>
               `).join("")}
             </div>
@@ -1881,6 +2077,12 @@ function bindPublic() {
     state.menuOpen = !state.menuOpen;
     renderPublic();
   });
+  $("#viewSwitchFloatBtn")?.addEventListener("click", () => {
+    state.view = state.view === "honor" ? "tree" : "honor";
+    state.menuOpen = false;
+    if (state.view === "tree") state.hasAutoFitTree = false;
+    renderPublic();
+  });
   $("#kinshipFloatBtn")?.addEventListener("click", openKinshipLookup);
   $("#viewerLogoutBtn")?.addEventListener("click", logoutViewer);
   $("#searchInput")?.addEventListener("input", (event) => {
@@ -1900,6 +2102,19 @@ function bindPublic() {
     event.preventDefault();
     state.selectedId = firstSuggestion.dataset.personId;
     state.menuOpen = false;
+    renderPublic();
+  });
+  $("#honorSearchInput")?.addEventListener("input", (event) => {
+    state.query = event.target.value;
+    renderPublic();
+    const input = $("#honorSearchInput");
+    if (input) {
+      input.focus();
+      input.setSelectionRange(input.value.length, input.value.length);
+    }
+  });
+  $("#honorFilter")?.addEventListener("change", (event) => {
+    state.honorFilter = event.target.value;
     renderPublic();
   });
   $$(".viewer-suggestion").forEach((button) => {
@@ -1951,7 +2166,7 @@ function bindPublic() {
   $$(".pan-pad button").forEach((button) => {
     button.addEventListener("click", () => nudgePan(button.dataset.pan));
   });
-  $$(".person-card, tbody tr, .inline-person").forEach((item) => {
+  $$(".person-card, .honor-card, tbody tr, .inline-person").forEach((item) => {
     item.addEventListener("click", () => {
       state.selectedId = item.dataset.personId;
       state.menuOpen = false;
@@ -2000,7 +2215,14 @@ function bindPublic() {
 
 async function handleViewerAuth(event) {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
+  const formElement = event.currentTarget;
+  const submitButton = formElement.querySelector('button[type="submit"]');
+  if (submitButton?.disabled) return;
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "Đang đăng nhập...";
+  }
+  const form = new FormData(formElement);
   const username = String(form.get("username") || "").trim();
   const password = String(form.get("password") || "").trim();
   try {
@@ -2019,10 +2241,16 @@ async function handleViewerAuth(event) {
       state.viewerUser = result.user || { username };
     }
     state.viewerAuthenticated = true;
+    state.viewerSessionError = "";
     await loadData();
     renderPublic();
   } catch (error) {
     toast(error.message);
+  } finally {
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = "Đăng nhập";
+    }
   }
 }
 
@@ -2207,6 +2435,8 @@ function adminSearchText(person) {
     person.deathDate,
     person.marriageYear,
     person.job,
+    person.educationLevel,
+    person.academicTitle,
     person.address,
     person.hometown,
     person.currentResidence,
@@ -2282,7 +2512,7 @@ function renderAdminPanel() {
             <div class="person-list">
               ${people.length ? people.map((person) => `
                 <button class="admin-person-row ${person.id === state.editingId ? "active" : ""}" data-edit-id="${esc(person.id)}">
-                  ${person.photo ? `<img class="mini-avatar" src="${esc(assetUrl(person.photo))}" alt="">` : `<span class="mini-avatar avatar-fallback">${esc(initials(person.fullName))}</span>`}
+                  ${person.photo ? `<img class="mini-avatar" src="${esc(assetUrl(person.photo))}" alt="" loading="lazy" decoding="async">` : `<span class="mini-avatar avatar-fallback">${esc(initials(person.fullName))}</span>`}
                   <span><strong>${esc(person.fullName)}</strong><br><span class="person-meta">${esc(person.familyRole || person.job || personResidence(person) || "Chưa cập nhật")}</span></span>
                 </button>
               `).join("") : `<p class="notice empty-admin-search">Không có kết quả phù hợp.</p>`}
@@ -2412,6 +2642,8 @@ function personForm(person) {
       <div class="field ${isDaughter ? "" : "role-hidden"}" data-role-group="daughter"><label>Mấy người con</label><input name="daughterChildrenCount" type="number" min="0" step="1" value="${esc(person.daughterChildrenCount || "")}" placeholder="Ví dụ: 2"></div>
       <div class="field"><label>Địa chỉ ghi chú</label><input name="address" value="${esc(person.address)}" placeholder="Có thể bỏ trống nếu đã nhập nơi ở"></div>
       <div class="field"><label>Nghề nghiệp</label><input name="job" value="${esc(person.job)}"></div>
+      <div class="field"><label>Trình độ học vấn</label><select name="educationLevel">${selectOptions(EDUCATION_LEVELS, person.educationLevel)}</select></div>
+      <div class="field"><label>Học hàm / học vị cao nhất</label><select name="academicTitle">${selectOptions(ACADEMIC_TITLES, person.academicTitle)}</select></div>
       <div class="field ${isDaughterInLaw ? "role-hidden" : ""}" data-role-group="birth-parent"><label>Bố đẻ</label>${selectPerson("fatherId", person.fatherId, person.id, false)}</div>
       <div class="field ${isDaughterInLaw ? "role-hidden" : ""}" data-role-group="birth-parent"><label>Mẹ đẻ</label>${selectPerson("motherId", person.motherId, person.id, false)}</div>
       <div class="field full ${isDaughterInLaw ? "" : "role-hidden"}" data-role-group="inlaw"><label>Chồng trong dòng họ</label>${selectPerson("husbandId", husband?.id || "", person.id, false, (item) => item.familyRole !== "Con dâu")}</div>
@@ -2584,16 +2816,27 @@ function updateInLawPreview() {
 
 async function login(event) {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
+  const formElement = event.currentTarget;
+  const submitButton = formElement.querySelector('button[type="submit"]');
+  if (submitButton?.disabled) return;
+  if (submitButton) {
+    submitButton.disabled = true;
+    submitButton.textContent = "Đang đăng nhập...";
+  }
+  const form = new FormData(formElement);
   try {
     await api("/api/login", {
       method: "POST",
       body: JSON.stringify({ username: form.get("username"), password: form.get("password") }),
     });
-    await loadData();
     await renderAdmin();
   } catch (error) {
     toast(error.message);
+  } finally {
+    if (submitButton) {
+      submitButton.disabled = false;
+      submitButton.textContent = "Đăng nhập";
+    }
   }
 }
 
@@ -2632,6 +2875,8 @@ async function savePerson(event) {
       daughterChildrenCount: formData.get("familyRole") === "Con gái" ? formData.get("daughterChildrenCount") : "",
       address: formData.get("address"),
       job: formData.get("job"),
+      educationLevel: formData.get("educationLevel"),
+      academicTitle: formData.get("academicTitle"),
       fatherId: formData.get("familyRole") === "Con dâu" ? "" : formData.get("fatherId"),
       motherId: formData.get("familyRole") === "Con dâu" ? "" : formData.get("motherId"),
       spouseIds: formData.get("familyRole") === "Con dâu"
@@ -2851,6 +3096,8 @@ function csvToPeople(text) {
       daughterChildrenCount: record.daughterChildrenCount || record.soNguoiCon || record.soCon || record.mayNguoiCon || "",
       address: record.address || record.diaChi || "",
       job: record.job || record.ngheNghiep || "",
+      educationLevel: record.educationLevel || record.trinhDo || record.hocVan || "",
+      academicTitle: record.academicTitle || record.hocHamHocVi || record.hocVi || record.hocHam || "",
       achievements: String(record.achievements || record.thanhTich || "").split(";").map((item) => item.trim()).filter(Boolean),
       fatherId: record.fatherId || "",
       motherId: record.motherId || "",

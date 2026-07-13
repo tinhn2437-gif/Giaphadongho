@@ -13,6 +13,8 @@ function json(data, status = 200, headers = {}) {
     status,
     headers: {
       "Content-Type": "application/json; charset=utf-8",
+      "Cache-Control": "no-store",
+      "X-Content-Type-Options": "nosniff",
       ...headers,
     },
   });
@@ -34,6 +36,33 @@ function normalizeUsername(value) {
     .replace(/[^a-zA-Z0-9_.-]+/g, "")
     .toLowerCase()
     .slice(0, 40);
+}
+
+function normalizedChoiceKey(value) {
+  return clean(value)
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/đ/g, "d")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function normalizeEducationLevel(value) {
+  const key = normalizedChoiceKey(value);
+  if (key === "pho thong") return "Phổ thông";
+  if (key === "cao dang") return "Cao đẳng";
+  if (key === "dai hoc") return "Đại học";
+  return "";
+}
+
+function normalizeAcademicTitle(value) {
+  const key = normalizedChoiceKey(value);
+  if (key === "thac si") return "Thạc sĩ";
+  if (key === "tien si") return "Tiến sĩ";
+  if (key === "pgs" || key === "pho giao su" || key === "pho giao su pgs") return "PGS";
+  if (key === "gs" || key === "giao su" || key === "giao su gs") return "GS";
+  return "";
 }
 
 function base64Url(bytes) {
@@ -187,6 +216,8 @@ function normalizePerson(payload, existingId = "") {
     daughterChildrenCount: clean(payload.daughterChildrenCount),
     address: clean(payload.address),
     job: clean(payload.job),
+    educationLevel: normalizeEducationLevel(payload.educationLevel),
+    academicTitle: normalizeAcademicTitle(payload.academicTitle),
     achievements: cleanArray(payload.achievements),
     fatherId: clean(payload.fatherId),
     motherId: clean(payload.motherId),

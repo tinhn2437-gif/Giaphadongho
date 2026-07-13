@@ -300,6 +300,33 @@ def normalize_family_role(value):
     return role or "Khác"
 
 
+def normalize_education_level(value):
+    label = clean_text(value)
+    key = unicodedata.normalize("NFD", label).encode("ascii", "ignore").decode("ascii").lower()
+    key = re.sub(r"[^a-z0-9]+", " ", key).strip()
+    return {
+        "pho thong": "Phổ thông",
+        "cao dang": "Cao đẳng",
+        "dai hoc": "Đại học",
+    }.get(key, "")
+
+
+def normalize_academic_title(value):
+    label = clean_text(value)
+    key = unicodedata.normalize("NFD", label).encode("ascii", "ignore").decode("ascii").lower()
+    key = re.sub(r"[^a-z0-9]+", " ", key).strip()
+    return {
+        "thac si": "Thạc sĩ",
+        "tien si": "Tiến sĩ",
+        "pgs": "PGS",
+        "pho giao su": "PGS",
+        "pho giao su pgs": "PGS",
+        "gs": "GS",
+        "giao su": "GS",
+        "giao su gs": "GS",
+    }.get(key, "")
+
+
 def normalize_person(raw, existing_id=None):
     person = {
         "id": existing_id or clean_text(raw.get("id")) or "p_" + uuid.uuid4().hex[:12],
@@ -318,6 +345,8 @@ def normalize_person(raw, existing_id=None):
         "daughterChildrenCount": clean_text(raw.get("daughterChildrenCount")),
         "address": clean_text(raw.get("address")),
         "job": clean_text(raw.get("job")),
+        "educationLevel": normalize_education_level(raw.get("educationLevel")),
+        "academicTitle": normalize_academic_title(raw.get("academicTitle")),
         "achievements": clean_list(raw.get("achievements")),
         "fatherId": clean_text(raw.get("fatherId")),
         "motherId": clean_text(raw.get("motherId")),
@@ -499,7 +528,7 @@ class FamilyHandler(BaseHTTPRequestHandler):
             self.send_json({
                 "authenticated": bool(user) or self.is_authenticated() or not REQUIRE_VIEW_LOGIN,
                 "user": {"username": user.get("username"), "displayName": user.get("displayName", "")} if user else None,
-                "registrationEnabled": True,
+                "registrationEnabled": False,
             })
             return
         if path == "/api/people":
@@ -601,6 +630,9 @@ class FamilyHandler(BaseHTTPRequestHandler):
         self.send_json({"error": "Sai tài khoản hoặc mật khẩu."}, status=401)
 
     def handle_register(self):
+        self.send_json({"error": "T\u00e0i kho\u1ea3n xem gia ph\u1ea3 do admin t\u1ea1o."}, status=403)
+        return
+
         payload = self.read_json()
         username = normalize_username(payload.get("username"))
         display_name = clean_text(payload.get("displayName"))[:80]
@@ -777,6 +809,8 @@ class FamilyHandler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         for cookie in cookies or []:
             self.send_header("Set-Cookie", cookie)
         self.end_headers()

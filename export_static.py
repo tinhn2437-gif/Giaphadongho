@@ -1,11 +1,9 @@
 from pathlib import Path
-import json
 import shutil
 
 
 BASE_DIR = Path(__file__).resolve().parent
 PUBLIC_DIR = BASE_DIR / "public"
-DATA_FILE = BASE_DIR / "data" / "family.json"
 UPLOADS_DIR = BASE_DIR / "uploads"
 OUT_DIR = BASE_DIR / "deploy-public"
 
@@ -29,28 +27,18 @@ def main():
     copy_tree(PUBLIC_DIR / "images", OUT_DIR / "images")
     copy_tree(UPLOADS_DIR, OUT_DIR / "uploads")
 
-    data = json.loads(DATA_FILE.read_text(encoding="utf-8"))
-    (OUT_DIR / "family.json").write_text(
-        json.dumps(data, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
     (OUT_DIR / ".nojekyll").write_text("", encoding="utf-8")
 
     guide = """# Gia phả dòng họ Nguyễn Hữu - bản public
 
-Đây là bản xem công khai dạng static. Có thể đưa nguyên thư mục này lên GitHub Pages, Cloudflare Pages, Netlify hoặc hosting tĩnh khác.
+Đây là phần giao diện để triển khai cùng Cloudflare Pages Functions. Dữ liệu gia phả không được đóng gói vào thư mục public nhằm bảo vệ yêu cầu đăng nhập.
 
 Các file quan trọng:
 - index.html
 - styles.css
 - app.js
-- family.json
 - images/
 - uploads/
-
-Muốn cập nhật dữ liệu: sửa trong web admin ở máy, sau đó chạy lại:
-
-python export_static.py
 """
     (OUT_DIR / "README.md").write_text(guide, encoding="utf-8")
     print("Created public export in deploy-public")

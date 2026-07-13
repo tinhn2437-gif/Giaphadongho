@@ -872,7 +872,13 @@ a {
 table {
   width: 100%;
   border-collapse: collapse;
-  min-width: 1320px;
+  min-width: 1540px;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.66;
+  transform: none !important;
 }
 
 th,
@@ -2018,6 +2024,507 @@ th {
   }
 
   .kinship-fab span {
+    display: none;
+  }
+}
+
+/* Bảng vàng vinh danh */
+.view-switch-fab,
+.kinship-fab {
+  background: linear-gradient(145deg, #b7461f, #6f2015);
+}
+
+.view-switch-fab {
+  position: fixed;
+  right: 22px;
+  bottom: 96px;
+  z-index: 35;
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  border: 1px solid rgba(255, 225, 153, 0.9);
+  border-radius: 50%;
+  background: linear-gradient(145deg, #17705a, #15493f);
+  color: #fff8dd;
+  box-shadow: 0 15px 32px rgba(36, 56, 36, 0.3), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.view-switch-fab:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 19px 38px rgba(36, 56, 36, 0.38), inset 0 1px 0 rgba(255, 255, 255, 0.36);
+}
+
+.view-switch-fab .icon {
+  width: 27px;
+  height: 27px;
+  stroke-width: 2.2;
+}
+
+.view-switch-fab span {
+  position: absolute;
+  right: 68px;
+  bottom: 10px;
+  width: max-content;
+  max-width: 220px;
+  padding: 9px 11px;
+  border: 1px solid rgba(198, 146, 57, 0.55);
+  border-radius: 8px;
+  background: rgba(255, 252, 235, 0.98);
+  color: var(--ink);
+  font-size: 12px;
+  font-weight: 800;
+  box-shadow: 0 12px 28px rgba(53, 30, 13, 0.18);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(6px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.view-switch-fab:hover span,
+.view-switch-fab:focus-visible span {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.honor-board {
+  min-height: calc(100vh - 112px);
+  margin: -16px -18px -18px;
+  padding: 34px clamp(16px, 4vw, 64px) 72px;
+  background:
+    linear-gradient(90deg, rgba(54, 16, 12, 0.93), rgba(113, 35, 23, 0.84) 32%, rgba(116, 55, 22, 0.8) 68%, rgba(38, 65, 48, 0.9)),
+    linear-gradient(rgba(75, 23, 16, 0.52), rgba(48, 42, 22, 0.72)),
+    var(--family-bg) center top / cover fixed,
+    #5c2117;
+  color: #fff9e8;
+}
+
+.honor-banner {
+  position: relative;
+  max-width: 1240px;
+  margin: 0 auto;
+  padding: 10px 0 28px;
+  border-bottom: 1px solid rgba(255, 215, 125, 0.55);
+  display: grid;
+  grid-template-columns: 78px minmax(0, 1fr);
+  gap: 18px 22px;
+  align-items: center;
+}
+
+.honor-banner::before,
+.honor-banner::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: rgba(255, 229, 155, 0.3);
+}
+
+.honor-banner::before {
+  top: 0;
+}
+
+.honor-banner::after {
+  bottom: 4px;
+}
+
+.honor-emblem {
+  width: 72px;
+  height: 72px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 224, 138, 0.75);
+  border-radius: 50%;
+  color: #ffe09a;
+  background: rgba(86, 29, 17, 0.72);
+  box-shadow: inset 0 0 0 5px rgba(255, 221, 126, 0.08), 0 14px 30px rgba(23, 9, 6, 0.24);
+}
+
+.honor-emblem .icon {
+  width: 38px;
+  height: 38px;
+}
+
+.honor-heading p {
+  margin: 0 0 6px;
+  color: #f2d49b;
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.honor-heading h2 {
+  margin: 0;
+  color: #fff1bd;
+  font-family: var(--font-title);
+  font-size: clamp(27px, 4vw, 46px);
+  line-height: 1.15;
+  text-shadow: 0 3px 18px rgba(30, 9, 5, 0.42);
+}
+
+.honor-heading > span {
+  display: block;
+  max-width: 820px;
+  margin-top: 8px;
+  color: rgba(255, 249, 229, 0.85);
+  font-size: 14px;
+}
+
+.honor-stats {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-top: 1px solid rgba(255, 218, 128, 0.26);
+  border-bottom: 1px solid rgba(255, 218, 128, 0.26);
+}
+
+.honor-stats div {
+  min-width: 0;
+  padding: 13px 16px;
+  border-right: 1px solid rgba(255, 218, 128, 0.24);
+}
+
+.honor-stats div:last-child {
+  border-right: 0;
+}
+
+.honor-stats strong,
+.honor-stats span {
+  display: block;
+}
+
+.honor-stats strong {
+  color: #ffe39d;
+  font-family: var(--font-title);
+  font-size: 25px;
+}
+
+.honor-stats span {
+  color: rgba(255, 249, 229, 0.75);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.honor-toolbar {
+  max-width: 1240px;
+  margin: 22px auto 18px;
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) minmax(210px, 280px);
+  gap: 12px;
+  align-items: end;
+}
+
+.honor-search {
+  width: 100%;
+  min-width: 0;
+  background: rgba(255, 251, 232, 0.96);
+}
+
+.honor-filter-label {
+  display: grid;
+  gap: 6px;
+}
+
+.honor-filter-label span {
+  color: #f4dca8;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.honor-filter-label select {
+  min-height: 46px;
+  width: 100%;
+  padding: 9px 34px 9px 11px;
+  border: 1px solid rgba(229, 189, 100, 0.72);
+  border-radius: 8px;
+  background: rgba(255, 251, 232, 0.96);
+  color: #432116;
+  font-weight: 700;
+}
+
+.honor-grid {
+  max-width: 1240px;
+  margin: 0 auto;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.honor-card {
+  position: relative;
+  min-width: 0;
+  padding: 16px;
+  overflow: hidden;
+  border: 1px solid rgba(219, 173, 74, 0.78);
+  border-radius: 8px;
+  background: linear-gradient(180deg, rgba(255, 253, 239, 0.98), rgba(255, 241, 195, 0.97));
+  color: #321b10;
+  box-shadow: 0 18px 34px rgba(25, 9, 6, 0.28), inset 0 3px 0 rgba(146, 43, 24, 0.76);
+  cursor: pointer;
+  transition: transform 160ms ease, box-shadow 160ms ease;
+}
+
+.honor-card:hover,
+.honor-card:focus-visible {
+  transform: translateY(-3px);
+  box-shadow: 0 24px 42px rgba(25, 9, 6, 0.36), inset 0 3px 0 #176b55;
+  outline: none;
+}
+
+.honor-card-top {
+  display: grid;
+  grid-template-columns: 34px 76px minmax(0, 1fr);
+  gap: 11px;
+  align-items: center;
+}
+
+.honor-rank {
+  align-self: start;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid #c88a28;
+  border-radius: 50%;
+  background: #7d2919;
+  color: #ffe9aa;
+  font-family: var(--font-title);
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.honor-card .photo-button {
+  width: 76px;
+  height: 92px;
+  padding: 0;
+}
+
+.honor-photo,
+.honor-card-top > .avatar-fallback {
+  width: 76px;
+  height: 92px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.honor-identity {
+  min-width: 0;
+}
+
+.honor-level {
+  display: inline-block;
+  margin-bottom: 5px;
+  color: #8b321e;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.honor-identity h3 {
+  margin: 0;
+  overflow-wrap: anywhere;
+  color: #2f160c;
+  font-family: var(--font-title);
+  font-size: 18px;
+  line-height: 1.25;
+}
+
+.honor-identity p {
+  margin: 6px 0 0;
+  color: #7a6044;
+  font-size: 12px;
+}
+
+.honor-details {
+  margin: 14px 0 0;
+  padding-top: 11px;
+  border-top: 1px solid rgba(174, 119, 42, 0.28);
+  display: grid;
+  gap: 6px;
+}
+
+.honor-details div {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.honor-details dt {
+  color: #806443;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.honor-details dd {
+  margin: 0;
+  color: #432116;
+  font-size: 12px;
+  font-weight: 700;
+  overflow-wrap: anywhere;
+}
+
+.honor-achievements {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid rgba(174, 119, 42, 0.28);
+  display: grid;
+  gap: 5px;
+}
+
+.honor-achievements strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #7f2b1b;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.honor-achievements .icon {
+  width: 14px;
+  height: 14px;
+}
+
+.honor-achievements span,
+.honor-achievements small {
+  color: #59422c;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.honor-achievements span::before {
+  content: "•";
+  margin-right: 7px;
+  color: #b54a22;
+}
+
+.honor-note {
+  margin: 11px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid rgba(174, 119, 42, 0.28);
+  color: #6c5438;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.honor-empty {
+  grid-column: 1 / -1;
+  padding: 56px 20px;
+  border-top: 1px solid rgba(255, 221, 139, 0.36);
+  border-bottom: 1px solid rgba(255, 221, 139, 0.36);
+  text-align: center;
+  color: rgba(255, 249, 229, 0.82);
+}
+
+.honor-empty .icon {
+  width: 42px;
+  height: 42px;
+  color: #ffe09a;
+}
+
+.honor-empty h3 {
+  margin: 10px 0 4px;
+  font-family: var(--font-title);
+  color: #fff0bb;
+}
+
+.honor-empty p {
+  margin: 0;
+}
+
+.login-warning {
+  padding: 9px 10px;
+  border-left: 3px solid #b54828;
+  background: rgba(255, 235, 201, 0.8);
+}
+
+@media (max-width: 980px) {
+  .honor-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .honor-board {
+    min-height: calc(100dvh - 62px);
+    margin: -8px;
+    padding: 22px 12px 90px;
+    background-attachment: scroll;
+  }
+
+  .honor-banner {
+    grid-template-columns: 56px minmax(0, 1fr);
+    gap: 12px;
+    padding-bottom: 20px;
+  }
+
+  .honor-emblem {
+    width: 54px;
+    height: 54px;
+  }
+
+  .honor-emblem .icon {
+    width: 29px;
+    height: 29px;
+  }
+
+  .honor-heading h2 {
+    font-size: 25px;
+  }
+
+  .honor-heading > span {
+    grid-column: 1 / -1;
+    font-size: 12px;
+  }
+
+  .honor-stats {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .honor-stats div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .honor-stats div:nth-child(-n + 2) {
+    border-bottom: 1px solid rgba(255, 218, 128, 0.24);
+  }
+
+  .honor-toolbar,
+  .honor-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .honor-card {
+    padding: 13px;
+  }
+
+  .honor-card-top {
+    grid-template-columns: 30px 66px minmax(0, 1fr);
+    gap: 9px;
+  }
+
+  .honor-card .photo-button,
+  .honor-photo,
+  .honor-card-top > .avatar-fallback {
+    width: 66px;
+    height: 82px;
+  }
+
+  .honor-identity h3 {
+    font-size: 16px;
+  }
+
+  .view-switch-fab {
+    right: 14px;
+    bottom: 78px;
+    width: 52px;
+    height: 52px;
+  }
+
+  .view-switch-fab span {
     display: none;
   }
 }
