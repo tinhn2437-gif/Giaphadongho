@@ -42,8 +42,8 @@ function normalizedChoiceKey(value) {
   return clean(value)
     .normalize("NFD")
     .replace(/[\u0300-\u036f]/g, "")
-    .replace(/đ/g, "d")
     .toLowerCase()
+    .replace(/đ/g, "d")
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 }
@@ -213,8 +213,17 @@ async function writeFamily(env, data) {
 }
 
 function normalizePerson(payload, existingId = "") {
-  const educationLevel = normalizeEducationLevel(payload.educationLevel);
-  const academicTitle = academicTitleFor(educationLevel, normalizeAcademicTitle(payload.academicTitle));
+  const rawEducationLevel = clean(payload.educationLevel);
+  const rawAcademicTitle = clean(payload.academicTitle);
+  const educationLevel = normalizeEducationLevel(rawEducationLevel);
+  const normalizedAcademicTitle = normalizeAcademicTitle(rawAcademicTitle);
+  if (rawEducationLevel && !educationLevel) {
+    throw publicError("Trình độ không hợp lệ. Vui lòng chọn lại trong danh sách.", 400);
+  }
+  if (rawAcademicTitle && !normalizedAcademicTitle) {
+    throw publicError("Học hàm/học vị không hợp lệ. Vui lòng chọn lại trong danh sách.", 400);
+  }
+  const academicTitle = academicTitleFor(educationLevel, normalizedAcademicTitle);
   const person = {
     id: existingId || clean(payload.id) || randomId("p"),
     fullName: clean(payload.fullName),

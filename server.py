@@ -302,6 +302,7 @@ def normalize_family_role(value):
 
 def normalize_education_level(value):
     label = clean_text(value)
+    label = label.replace("Đ", "D").replace("đ", "d")
     key = unicodedata.normalize("NFD", label).encode("ascii", "ignore").decode("ascii").lower()
     key = re.sub(r"[^a-z0-9]+", " ", key).strip()
     return {
@@ -313,6 +314,7 @@ def normalize_education_level(value):
 
 def normalize_academic_title(value):
     label = clean_text(value)
+    label = label.replace("Đ", "D").replace("đ", "d")
     key = unicodedata.normalize("NFD", label).encode("ascii", "ignore").decode("ascii").lower()
     key = re.sub(r"[^a-z0-9]+", " ", key).strip()
     return {
