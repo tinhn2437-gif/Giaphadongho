@@ -58,11 +58,17 @@ function normalizeEducationLevel(value) {
 
 function normalizeAcademicTitle(value) {
   const key = normalizedChoiceKey(value);
+  if (key === "cu nhan") return "Cử nhân";
   if (key === "thac si") return "Thạc sĩ";
   if (key === "tien si") return "Tiến sĩ";
   if (key === "pgs" || key === "pho giao su" || key === "pho giao su pgs") return "PGS";
   if (key === "gs" || key === "giao su" || key === "giao su gs") return "GS";
   return "";
+}
+
+function academicTitleFor(educationLevel, academicTitle) {
+  if (academicTitle === "Cử nhân" && !["Cao đẳng", "Đại học"].includes(educationLevel)) return "";
+  return academicTitle || (["Cao đẳng", "Đại học"].includes(educationLevel) ? "Cử nhân" : "");
 }
 
 function base64Url(bytes) {
@@ -180,7 +186,15 @@ async function readFamily(env) {
   if (!row) return { familyName: DEFAULT_FAMILY_NAME, people: [] };
   const data = JSON.parse(row.json);
   data.familyName = clean(data.familyName) || DEFAULT_FAMILY_NAME;
-  data.people = Array.isArray(data.people) ? data.people : [];
+  data.people = (Array.isArray(data.people) ? data.people : []).map((person) => {
+    const educationLevel = normalizeEducationLevel(person.educationLevel);
+    const academicTitle = normalizeAcademicTitle(person.academicTitle);
+    return {
+      ...person,
+      educationLevel,
+      academicTitle: academicTitleFor(educationLevel, academicTitle),
+    };
+  });
   return data;
 }
 
@@ -199,6 +213,8 @@ async function writeFamily(env, data) {
 }
 
 function normalizePerson(payload, existingId = "") {
+  const educationLevel = normalizeEducationLevel(payload.educationLevel);
+  const academicTitle = academicTitleFor(educationLevel, normalizeAcademicTitle(payload.academicTitle));
   const person = {
     id: existingId || clean(payload.id) || randomId("p"),
     fullName: clean(payload.fullName),
@@ -216,8 +232,8 @@ function normalizePerson(payload, existingId = "") {
     daughterChildrenCount: clean(payload.daughterChildrenCount),
     address: clean(payload.address),
     job: clean(payload.job),
-    educationLevel: normalizeEducationLevel(payload.educationLevel),
-    academicTitle: normalizeAcademicTitle(payload.academicTitle),
+    educationLevel,
+    academicTitle,
     achievements: cleanArray(payload.achievements),
     fatherId: clean(payload.fatherId),
     motherId: clean(payload.motherId),

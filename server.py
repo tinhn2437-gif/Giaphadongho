@@ -316,6 +316,7 @@ def normalize_academic_title(value):
     key = unicodedata.normalize("NFD", label).encode("ascii", "ignore").decode("ascii").lower()
     key = re.sub(r"[^a-z0-9]+", " ", key).strip()
     return {
+        "cu nhan": "Cử nhân",
         "thac si": "Thạc sĩ",
         "tien si": "Tiến sĩ",
         "pgs": "PGS",
@@ -328,6 +329,12 @@ def normalize_academic_title(value):
 
 
 def normalize_person(raw, existing_id=None):
+    education_level = normalize_education_level(raw.get("educationLevel"))
+    academic_title = normalize_academic_title(raw.get("academicTitle"))
+    if academic_title == "Cử nhân" and education_level not in ["Cao đẳng", "Đại học"]:
+        academic_title = ""
+    if not academic_title and education_level in ["Cao đẳng", "Đại học"]:
+        academic_title = "Cử nhân"
     person = {
         "id": existing_id or clean_text(raw.get("id")) or "p_" + uuid.uuid4().hex[:12],
         "fullName": clean_text(raw.get("fullName")),
@@ -345,8 +352,8 @@ def normalize_person(raw, existing_id=None):
         "daughterChildrenCount": clean_text(raw.get("daughterChildrenCount")),
         "address": clean_text(raw.get("address")),
         "job": clean_text(raw.get("job")),
-        "educationLevel": normalize_education_level(raw.get("educationLevel")),
-        "academicTitle": normalize_academic_title(raw.get("academicTitle")),
+        "educationLevel": education_level,
+        "academicTitle": academic_title,
         "achievements": clean_list(raw.get("achievements")),
         "fatherId": clean_text(raw.get("fatherId")),
         "motherId": clean_text(raw.get("motherId")),
