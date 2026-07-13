@@ -312,7 +312,7 @@ def normalize_education_level(value):
     }.get(key, "")
 
 
-def normalize_academic_title(value):
+def normalize_academic_degree(value):
     label = clean_text(value)
     label = label.replace("Đ", "D").replace("đ", "d")
     key = unicodedata.normalize("NFD", label).encode("ascii", "ignore").decode("ascii").lower()
@@ -321,6 +321,15 @@ def normalize_academic_title(value):
         "cu nhan": "Cử nhân",
         "thac si": "Thạc sĩ",
         "tien si": "Tiến sĩ",
+    }.get(key, "")
+
+
+def normalize_academic_rank(value):
+    label = clean_text(value)
+    label = label.replace("Đ", "D").replace("đ", "d")
+    key = unicodedata.normalize("NFD", label).encode("ascii", "ignore").decode("ascii").lower()
+    key = re.sub(r"[^a-z0-9]+", " ", key).strip()
+    return {
         "pgs": "PGS",
         "pho giao su": "PGS",
         "pho giao su pgs": "PGS",
@@ -332,11 +341,13 @@ def normalize_academic_title(value):
 
 def normalize_person(raw, existing_id=None):
     education_level = normalize_education_level(raw.get("educationLevel"))
-    academic_title = normalize_academic_title(raw.get("academicTitle"))
-    if academic_title == "Cử nhân" and education_level not in ["Cao đẳng", "Đại học"]:
-        academic_title = ""
-    if not academic_title and education_level in ["Cao đẳng", "Đại học"]:
-        academic_title = "Cử nhân"
+    legacy_title = clean_text(raw.get("academicTitle"))
+    academic_degree = normalize_academic_degree(raw.get("academicDegree")) or normalize_academic_degree(legacy_title)
+    academic_rank = normalize_academic_rank(raw.get("academicRank")) or normalize_academic_rank(legacy_title)
+    if academic_degree == "Cử nhân" and education_level not in ["Cao đẳng", "Đại học"]:
+        academic_degree = ""
+    if not academic_degree and education_level in ["Cao đẳng", "Đại học"]:
+        academic_degree = "Cử nhân"
     person = {
         "id": existing_id or clean_text(raw.get("id")) or "p_" + uuid.uuid4().hex[:12],
         "fullName": clean_text(raw.get("fullName")),
@@ -355,7 +366,9 @@ def normalize_person(raw, existing_id=None):
         "address": clean_text(raw.get("address")),
         "job": clean_text(raw.get("job")),
         "educationLevel": education_level,
-        "academicTitle": academic_title,
+        "academicDegree": academic_degree,
+        "academicRank": academic_rank,
+        "academicTitle": academic_rank or academic_degree,
         "achievements": clean_list(raw.get("achievements")),
         "fatherId": clean_text(raw.get("fatherId")),
         "motherId": clean_text(raw.get("motherId")),

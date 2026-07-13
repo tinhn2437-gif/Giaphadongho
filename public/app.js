@@ -48,6 +48,8 @@ const emptyPerson = {
   address: "",
   job: "",
   educationLevel: "",
+  academicDegree: "",
+  academicRank: "",
   academicTitle: "",
   achievements: [],
   fatherId: "",
@@ -59,7 +61,8 @@ const emptyPerson = {
 };
 
 const EDUCATION_LEVELS = ["Phổ thông", "Cao đẳng", "Đại học"];
-const ACADEMIC_TITLES = ["Cử nhân", "Thạc sĩ", "Tiến sĩ", "PGS", "GS"];
+const ACADEMIC_DEGREES = ["Cử nhân", "Thạc sĩ", "Tiến sĩ"];
+const ACADEMIC_RANKS = ["PGS", "GS"];
 
 const $ = (selector, root = document) => root.querySelector(selector);
 const $$ = (selector, root = document) => Array.from(root.querySelectorAll(selector));
@@ -1764,7 +1767,8 @@ function renderList() {
         <td>${esc(personResidence(person))}</td>
         <td>${esc(person.job || "")}</td>
         <td>${esc(person.educationLevel || "")}</td>
-        <td>${esc(effectiveAcademicTitle(person))}</td>
+        <td>${esc(academicRankFor(person))}</td>
+        <td>${esc(academicDegreeFor(person))}</td>
         <td>${esc((person.achievements || []).join("; "))}</td>
       </tr>
     `;
@@ -1774,37 +1778,51 @@ function renderList() {
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>Họ tên</th><th>Vai trò</th><th>Thứ tự</th><th>Trạng thái</th><th>Ngày sinh</th><th>Năm lập gia đình</th><th>Bố mẹ / bên chồng</th><th>Vợ/chồng</th><th>Quê quán</th><th>Đang ở</th><th>Nghề nghiệp</th><th>Trình độ</th><th>Học hàm/học vị</th><th>Thành tích</th></tr>
+            <tr><th>Họ tên</th><th>Vai trò</th><th>Thứ tự</th><th>Trạng thái</th><th>Ngày sinh</th><th>Năm lập gia đình</th><th>Bố mẹ / bên chồng</th><th>Vợ/chồng</th><th>Quê quán</th><th>Đang ở</th><th>Nghề nghiệp</th><th>Trình độ</th><th>Học hàm</th><th>Học vị</th><th>Thành tích</th></tr>
           </thead>
-          <tbody>${rows || `<tr><td colspan="14">Không tìm thấy người phù hợp.</td></tr>`}</tbody>
+          <tbody>${rows || `<tr><td colspan="15">Không tìm thấy người phù hợp.</td></tr>`}</tbody>
         </table>
       </div>
     </section>
   `;
 }
 
-const ACADEMIC_TITLE_SCORE = { GS: 70000, PGS: 60000, "Tiến sĩ": 50000, "Thạc sĩ": 40000, "Cử nhân": 30000 };
+const ACADEMIC_RANK_SCORE = { GS: 70000, PGS: 60000 };
+const ACADEMIC_DEGREE_SCORE = { "Tiến sĩ": 50000, "Thạc sĩ": 40000, "Cử nhân": 30000 };
 const EDUCATION_LEVEL_SCORE = { "Đại học": 2000, "Cao đẳng": 1000, "Phổ thông": 100 };
 
-function effectiveAcademicTitle(person) {
-  if (person.academicTitle) return person.academicTitle;
+function academicDegreeFor(person) {
+  if (person.academicDegree) return person.academicDegree;
+  if (["Cử nhân", "Thạc sĩ", "Tiến sĩ"].includes(person.academicTitle)) return person.academicTitle;
   return ["Cao đẳng", "Đại học"].includes(person.educationLevel) ? "Cử nhân" : "";
 }
 
+function academicRankFor(person) {
+  if (person.academicRank) return person.academicRank;
+  return ["PGS", "GS"].includes(person.academicTitle) ? person.academicTitle : "";
+}
+
+function academicDisplay(person) {
+  return [academicRankFor(person), academicDegreeFor(person)].filter(Boolean).join(" · ");
+}
+
 function isHonoree(person) {
-  const title = effectiveAcademicTitle(person);
+  const degree = academicDegreeFor(person);
   return ["Cao đẳng", "Đại học"].includes(person.educationLevel)
-    || ["Thạc sĩ", "Tiến sĩ", "PGS", "GS"].includes(title);
+    || ["Thạc sĩ", "Tiến sĩ"].includes(degree)
+    || Boolean(academicRankFor(person));
 }
 
 function honorScore(person) {
-  return (ACADEMIC_TITLE_SCORE[effectiveAcademicTitle(person)] || 0)
+  return (ACADEMIC_RANK_SCORE[academicRankFor(person)] || 0)
+    + (ACADEMIC_DEGREE_SCORE[academicDegreeFor(person)] || 0)
     + (EDUCATION_LEVEL_SCORE[person.educationLevel] || 0)
     + Math.min((person.achievements || []).length, 20);
 }
 
 function honorFilterMatches(person) {
-  if (state.honorFilter === "academic") return Boolean(effectiveAcademicTitle(person));
+  if (state.honorFilter === "rank") return Boolean(academicRankFor(person));
+  if (state.honorFilter === "degree") return Boolean(academicDegreeFor(person));
   if (state.honorFilter === "education") return ["Cao đẳng", "Đại học"].includes(person.educationLevel);
   if (state.honorFilter === "award") return (person.achievements || []).length > 0;
   return true;
@@ -1820,14 +1838,14 @@ function sortedHonorees() {
 }
 
 function honorSummaryLabel(person) {
-  return effectiveAcademicTitle(person) || person.educationLevel || "Thành tích tiêu biểu";
+  return academicDisplay(person) || person.educationLevel || "Thành tích tiêu biểu";
 }
 
 function renderHonorBoard() {
   const allHonorees = sortedHonorees();
   const honorees = allHonorees.filter(honorFilterMatches).filter(personMatches);
-  const academicCount = allHonorees.filter((person) => effectiveAcademicTitle(person)).length;
-  const graduateCount = allHonorees.filter((person) => ["Cao đẳng", "Đại học"].includes(person.educationLevel)).length;
+  const rankCount = allHonorees.filter((person) => academicRankFor(person)).length;
+  const degreeCount = allHonorees.filter((person) => academicDegreeFor(person)).length;
   const awardCount = allHonorees.filter((person) => (person.achievements || []).length).length;
 
   return `
@@ -1841,8 +1859,8 @@ function renderHonorBoard() {
         </div>
         <div class="honor-stats" aria-label="Thống kê bảng vàng">
           <div><strong>${allHonorees.length}</strong><span>Người được ghi nhận</span></div>
-          <div><strong>${academicCount}</strong><span>Học hàm, học vị</span></div>
-          <div><strong>${graduateCount}</strong><span>Cao đẳng, đại học</span></div>
+          <div><strong>${rankCount}</strong><span>Có học hàm</span></div>
+          <div><strong>${degreeCount}</strong><span>Có học vị</span></div>
           <div><strong>${awardCount}</strong><span>Có giải thưởng</span></div>
         </div>
       </header>
@@ -1856,7 +1874,8 @@ function renderHonorBoard() {
           <span>Nhóm vinh danh</span>
           <select id="honorFilter">
             <option value="all" ${state.honorFilter === "all" ? "selected" : ""}>Tất cả</option>
-            <option value="academic" ${state.honorFilter === "academic" ? "selected" : ""}>Học hàm, học vị</option>
+            <option value="rank" ${state.honorFilter === "rank" ? "selected" : ""}>Học hàm</option>
+            <option value="degree" ${state.honorFilter === "degree" ? "selected" : ""}>Học vị</option>
             <option value="education" ${state.honorFilter === "education" ? "selected" : ""}>Cao đẳng, đại học</option>
             <option value="award" ${state.honorFilter === "award" ? "selected" : ""}>Giải thưởng, thành tích</option>
           </select>
@@ -1880,7 +1899,8 @@ function renderHonorBoard() {
               </div>
               <dl class="honor-details">
                 <div><dt>Trình độ</dt><dd>${esc(person.educationLevel || "Chưa cập nhật")}</dd></div>
-                <div><dt>Học hàm/học vị</dt><dd>${esc(effectiveAcademicTitle(person) || "Chưa cập nhật")}</dd></div>
+                <div><dt>Học hàm</dt><dd>${esc(academicRankFor(person) || "Chưa cập nhật")}</dd></div>
+                <div><dt>Học vị</dt><dd>${esc(academicDegreeFor(person) || "Chưa cập nhật")}</dd></div>
                 <div><dt>Nghề nghiệp</dt><dd>${esc(person.job || "Chưa cập nhật")}</dd></div>
               </dl>
               ${achievements.length ? `<div class="honor-achievements"><strong>${icon("award")}Thành tích</strong>${achievements.slice(0, 3).map((item) => `<span>${esc(item)}</span>`).join("")}${achievements.length > 3 ? `<small>+${achievements.length - 3} thành tích khác</small>` : ""}</div>` : ""}
@@ -1891,7 +1911,7 @@ function renderHonorBoard() {
           <div class="honor-empty">
             ${icon("award")}
             <h3>Chưa có người phù hợp</h3>
-            <p>Thông tin sẽ xuất hiện khi Admin cập nhật trình độ, học hàm/học vị hoặc thành tích.</p>
+            <p>Thông tin sẽ xuất hiện khi Admin cập nhật trình độ, học vị hoặc học hàm phù hợp.</p>
           </div>
         `}
       </div>
@@ -1918,7 +1938,8 @@ function exportExcel() {
     "Đang ở",
     "Nghề nghiệp",
     "Trình độ",
-    "Học hàm/học vị",
+    "Học hàm",
+    "Học vị",
     "Thành tích",
   ];
   const cell = (value) => `<td>${esc(value)}</td>`;
@@ -1942,7 +1963,8 @@ function exportExcel() {
       personResidence(person),
       person.job,
       person.educationLevel,
-      effectiveAcademicTitle(person),
+      academicRankFor(person),
+      academicDegreeFor(person),
       (person.achievements || []).join("; "),
     ].map(cell).join("")}</tr>`;
   }).join("");
@@ -2019,7 +2041,8 @@ function renderDetail(id) {
           <dt>Đang ở</dt><dd>${esc(personResidence(person) || "Chưa cập nhật")}</dd>
           <dt>Nghề nghiệp</dt><dd>${esc(person.job || "Chưa cập nhật")}</dd>
           <dt>Trình độ</dt><dd>${esc(person.educationLevel || "Chưa cập nhật")}</dd>
-          <dt>Học hàm/học vị</dt><dd>${esc(effectiveAcademicTitle(person) || "Chưa cập nhật")}</dd>
+          <dt>Học hàm</dt><dd>${esc(academicRankFor(person) || "Chưa cập nhật")}</dd>
+          <dt>Học vị</dt><dd>${esc(academicDegreeFor(person) || "Chưa cập nhật")}</dd>
           <dt>Thành tích</dt><dd>${(person.achievements || []).length ? `<div class="chips">${person.achievements.map((item) => `<span class="chip">${esc(item)}</span>`).join("")}</div>` : "Chưa cập nhật"}</dd>
           <dt>Ghi chú</dt><dd>${esc(person.notes || "Không có")}</dd>
         </dl>
@@ -2441,7 +2464,8 @@ function adminSearchText(person) {
     person.marriageYear,
     person.job,
     person.educationLevel,
-    effectiveAcademicTitle(person),
+    academicRankFor(person),
+    academicDegreeFor(person),
     person.address,
     person.hometown,
     person.currentResidence,
@@ -2648,7 +2672,8 @@ function personForm(person) {
       <div class="field"><label>Địa chỉ ghi chú</label><input name="address" value="${esc(person.address)}" placeholder="Có thể bỏ trống nếu đã nhập nơi ở"></div>
       <div class="field"><label>Nghề nghiệp</label><input name="job" value="${esc(person.job)}"></div>
       <div class="field"><label>Trình độ học vấn</label><select name="educationLevel">${selectOptions(EDUCATION_LEVELS, person.educationLevel)}</select></div>
-      <div class="field"><label>Học hàm / học vị cao nhất</label><select name="academicTitle">${selectOptions(ACADEMIC_TITLES, effectiveAcademicTitle(person))}</select></div>
+      <div class="field"><label>Học vị cao nhất</label><select name="academicDegree">${selectOptions(ACADEMIC_DEGREES, academicDegreeFor(person))}</select></div>
+      <div class="field"><label>Học hàm nếu có</label><select name="academicRank">${selectOptions(ACADEMIC_RANKS, academicRankFor(person))}</select></div>
       <div class="field ${isDaughterInLaw ? "role-hidden" : ""}" data-role-group="birth-parent"><label>Bố đẻ</label>${selectPerson("fatherId", person.fatherId, person.id, false)}</div>
       <div class="field ${isDaughterInLaw ? "role-hidden" : ""}" data-role-group="birth-parent"><label>Mẹ đẻ</label>${selectPerson("motherId", person.motherId, person.id, false)}</div>
       <div class="field full ${isDaughterInLaw ? "" : "role-hidden"}" data-role-group="inlaw"><label>Chồng trong dòng họ</label>${selectPerson("husbandId", husband?.id || "", person.id, false, (item) => item.familyRole !== "Con dâu")}</div>
@@ -2851,10 +2876,10 @@ function updateEducationFields() {
   const form = $("#personForm");
   if (!form) return;
   const education = form.elements.educationLevel?.value || "";
-  const academic = form.elements.academicTitle;
-  if (!academic) return;
-  if (["Cao đẳng", "Đại học"].includes(education) && !academic.value) academic.value = "Cử nhân";
-  if (!["Cao đẳng", "Đại học"].includes(education) && academic.value === "Cử nhân") academic.value = "";
+  const degree = form.elements.academicDegree;
+  if (!degree) return;
+  if (["Cao đẳng", "Đại học"].includes(education) && !degree.value) degree.value = "Cử nhân";
+  if (!["Cao đẳng", "Đại học"].includes(education) && degree.value === "Cử nhân") degree.value = "";
 }
 
 async function savePerson(event) {
@@ -2893,7 +2918,8 @@ async function savePerson(event) {
       address: formData.get("address"),
       job: formData.get("job"),
       educationLevel: formData.get("educationLevel"),
-      academicTitle: formData.get("academicTitle"),
+      academicDegree: formData.get("academicDegree"),
+      academicRank: formData.get("academicRank"),
       fatherId: formData.get("familyRole") === "Con dâu" ? "" : formData.get("fatherId"),
       motherId: formData.get("familyRole") === "Con dâu" ? "" : formData.get("motherId"),
       spouseIds: formData.get("familyRole") === "Con dâu"
@@ -3114,7 +3140,9 @@ function csvToPeople(text) {
       address: record.address || record.diaChi || "",
       job: record.job || record.ngheNghiep || "",
       educationLevel: record.educationLevel || record.trinhDo || record.hocVan || "",
-      academicTitle: record.academicTitle || record.hocHamHocVi || record.hocVi || record.hocHam || "",
+      academicDegree: record.academicDegree || record.hocVi || (["Cử nhân", "Thạc sĩ", "Tiến sĩ"].includes(record.academicTitle) ? record.academicTitle : ""),
+      academicRank: record.academicRank || record.hocHam || (["PGS", "GS"].includes(record.academicTitle) ? record.academicTitle : ""),
+      academicTitle: record.academicTitle || record.hocHamHocVi || "",
       achievements: String(record.achievements || record.thanhTich || "").split(";").map((item) => item.trim()).filter(Boolean),
       fatherId: record.fatherId || "",
       motherId: record.motherId || "",

@@ -56,19 +56,24 @@ function normalizeEducationLevel(value) {
   return "";
 }
 
-function normalizeAcademicTitle(value) {
+function normalizeAcademicDegree(value) {
   const key = normalizedChoiceKey(value);
   if (key === "cu nhan") return "Cử nhân";
   if (key === "thac si") return "Thạc sĩ";
   if (key === "tien si") return "Tiến sĩ";
+  return "";
+}
+
+function normalizeAcademicRank(value) {
+  const key = normalizedChoiceKey(value);
   if (key === "pgs" || key === "pho giao su" || key === "pho giao su pgs") return "PGS";
   if (key === "gs" || key === "giao su" || key === "giao su gs") return "GS";
   return "";
 }
 
-function academicTitleFor(educationLevel, academicTitle) {
-  if (academicTitle === "Cử nhân" && !["Cao đẳng", "Đại học"].includes(educationLevel)) return "";
-  return academicTitle || (["Cao đẳng", "Đại học"].includes(educationLevel) ? "Cử nhân" : "");
+function academicDegreeFor(educationLevel, academicDegree) {
+  if (academicDegree === "Cử nhân" && !["Cao đẳng", "Đại học"].includes(educationLevel)) return "";
+  return academicDegree || (["Cao đẳng", "Đại học"].includes(educationLevel) ? "Cử nhân" : "");
 }
 
 function base64Url(bytes) {
@@ -188,11 +193,18 @@ async function readFamily(env) {
   data.familyName = clean(data.familyName) || DEFAULT_FAMILY_NAME;
   data.people = (Array.isArray(data.people) ? data.people : []).map((person) => {
     const educationLevel = normalizeEducationLevel(person.educationLevel);
-    const academicTitle = normalizeAcademicTitle(person.academicTitle);
+    const legacyTitle = clean(person.academicTitle);
+    const academicDegree = academicDegreeFor(
+      educationLevel,
+      normalizeAcademicDegree(person.academicDegree) || normalizeAcademicDegree(legacyTitle),
+    );
+    const academicRank = normalizeAcademicRank(person.academicRank) || normalizeAcademicRank(legacyTitle);
     return {
       ...person,
       educationLevel,
-      academicTitle: academicTitleFor(educationLevel, academicTitle),
+      academicDegree,
+      academicRank,
+      academicTitle: academicRank || academicDegree,
     };
   });
   return data;
@@ -214,16 +226,25 @@ async function writeFamily(env, data) {
 
 function normalizePerson(payload, existingId = "") {
   const rawEducationLevel = clean(payload.educationLevel);
-  const rawAcademicTitle = clean(payload.academicTitle);
+  const rawAcademicDegree = clean(payload.academicDegree);
+  const rawAcademicRank = clean(payload.academicRank);
+  const legacyTitle = clean(payload.academicTitle);
   const educationLevel = normalizeEducationLevel(rawEducationLevel);
-  const normalizedAcademicTitle = normalizeAcademicTitle(rawAcademicTitle);
+  const normalizedAcademicDegree = normalizeAcademicDegree(rawAcademicDegree) || normalizeAcademicDegree(legacyTitle);
+  const academicRank = normalizeAcademicRank(rawAcademicRank) || normalizeAcademicRank(legacyTitle);
   if (rawEducationLevel && !educationLevel) {
     throw publicError("Trình độ không hợp lệ. Vui lòng chọn lại trong danh sách.", 400);
   }
-  if (rawAcademicTitle && !normalizedAcademicTitle) {
-    throw publicError("Học hàm/học vị không hợp lệ. Vui lòng chọn lại trong danh sách.", 400);
+  if (rawAcademicDegree && !normalizeAcademicDegree(rawAcademicDegree)) {
+    throw publicError("Học vị không hợp lệ. Vui lòng chọn lại trong danh sách.", 400);
   }
-  const academicTitle = academicTitleFor(educationLevel, normalizedAcademicTitle);
+  if (rawAcademicRank && !normalizeAcademicRank(rawAcademicRank)) {
+    throw publicError("Học hàm không hợp lệ. Vui lòng chọn lại trong danh sách.", 400);
+  }
+  if (legacyTitle && !normalizeAcademicDegree(legacyTitle) && !normalizeAcademicRank(legacyTitle)) {
+    throw publicError("Học hàm/học vị cũ không hợp lệ. Vui lòng chọn lại trong danh sách.", 400);
+  }
+  const academicDegree = academicDegreeFor(educationLevel, normalizedAcademicDegree);
   const person = {
     id: existingId || clean(payload.id) || randomId("p"),
     fullName: clean(payload.fullName),
@@ -242,7 +263,9 @@ function normalizePerson(payload, existingId = "") {
     address: clean(payload.address),
     job: clean(payload.job),
     educationLevel,
-    academicTitle,
+    academicDegree,
+    academicRank,
+    academicTitle: academicRank || academicDegree,
     achievements: cleanArray(payload.achievements),
     fatherId: clean(payload.fatherId),
     motherId: clean(payload.motherId),
