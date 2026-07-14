@@ -2164,7 +2164,8 @@ function renderDetail(id) {
   const galleryPhotos = cleanGallery(person.galleryPhotos);
   const viewerIdentity = personById(state.viewerUser?.personId);
   const personalSpeech = viewerIdentity && viewerIdentity.id !== person.id ? kinshipSpeech(viewerIdentity, person) : null;
-  const hasGraveInfo = status.label === "Đã mất" && [person.graveLocation, person.graveAddress, person.graveMapUrl, person.graveNotes, person.gravePhoto].some(Boolean);
+  const hasGraveInfo = !!String(person.deathDate || "").trim()
+    && [person.graveLocation, person.graveAddress, person.graveMapUrl, person.graveNotes, person.gravePhoto].some(Boolean);
   const graveMapUrl = /^https?:\/\//i.test(String(person.graveMapUrl || "").trim()) ? String(person.graveMapUrl).trim() : "";
   return `
     <aside class="detail-drawer">
@@ -2183,7 +2184,7 @@ function renderDetail(id) {
             <div class="chips">
               <span class="chip icon-chip">${genderIconHtml(person)}${esc(person.gender || "Khác")}</span>
               <span class="chip icon-chip ${status.className}">${icon(status.icon)}${esc(status.label)}</span>
-              ${status.label === "Đã mất" && (person.graveLocation || person.graveAddress) ? `<span class="chip grave-location-chip">Phần mộ: ${esc(person.graveLocation || person.graveAddress)}</span>` : ""}
+              ${person.deathDate && (person.graveLocation || person.graveAddress) ? `<span class="chip grave-location-chip">Phần mộ: ${esc(person.graveLocation || person.graveAddress)}</span>` : ""}
               ${order ? `<span class="chip icon-chip">${icon("order")}${esc(order)}</span>` : ""}
               ${person.birthDate ? `<span class="chip">Sinh ${esc(formatDate(person.birthDate))}</span>` : ""}
               ${person.deathDate ? `<span class="chip">Mất ${esc(formatDate(person.deathDate))}</span>` : ""}
