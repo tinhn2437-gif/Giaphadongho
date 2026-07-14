@@ -217,11 +217,21 @@ function editablePersonIdsForCurrentUser() {
   if (adminCanEditAll()) return new Set(state.data.people.map((person) => person.id));
   const identity = personById(state.currentAdmin?.personId);
   if (!identity) return new Set();
-  const spouseIds = identity.spouseIds || [];
-  const result = new Set([identity.id, ...spouseIds]);
-  state.data.people.forEach((person) => {
-    if ([identity.id, ...spouseIds].includes(person.fatherId) || [identity.id, ...spouseIds].includes(person.motherId)) result.add(person.id);
-  });
+  const lineageIds = new Set([identity.id, ...(identity.spouseIds || [])]);
+  const result = new Set(lineageIds);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    state.data.people.forEach((person) => {
+      if (!lineageIds.has(person.fatherId) && !lineageIds.has(person.motherId)) return;
+      if (!lineageIds.has(person.id)) {
+        lineageIds.add(person.id);
+        changed = true;
+      }
+      result.add(person.id);
+      (person.spouseIds || []).forEach((spouseId) => result.add(spouseId));
+    });
+  }
   return result;
 }
 
@@ -1192,6 +1202,8 @@ function renderKinshipFloatButton() {
 function topbar(admin) {
   const viewerName = state.viewerUser?.displayName || state.viewerUser?.username || "";
   const adminName = state.currentAdmin?.displayName || state.currentAdmin?.username || "";
+  const activeRole = admin ? state.currentAdmin?.role : state.viewerUser?.role;
+  const updateLabel = activeRole === "member" ? "Sửa thông tin" : activeRole === "clan_head" ? "Quản lý gia phả" : "Admin";
   return `
     <header class="topbar">
       <a class="brand" href="${state.staticMode ? "./" : "/"}">
@@ -1203,7 +1215,7 @@ function topbar(admin) {
       </a>
       <nav class="nav-actions">
         <a class="ghost-btn" href="${state.staticMode ? "./" : "/"}">Trang xem</a>
-        ${state.staticMode ? "" : `<a class="btn" href="/admin">Admin</a>`}
+        ${state.staticMode ? "" : `<a class="btn" href="/admin">${updateLabel}</a>`}
         ${!admin && state.viewerAuthenticated ? `<button class="ghost-btn" id="viewerLogoutBtn" type="button">Đăng xuất</button>` : ""}
         ${admin && state.authenticated ? `<button class="ghost-btn" id="logoutBtn">Đăng xuất</button>` : ""}
       </nav>
@@ -1251,23 +1263,86 @@ function kinshipOptions(selectedId) {
   `).join("")}`;
 }
 
-function searchableSelect(selectHtml, placeholder = "Tìm tên...") {
-  return `<div class="searchable-person-select"><label class="select-search">${icon("search")}<input type="search" class="person-select-filter" placeholder="${esc(placeholder)}" autocomplete="off"></label>${selectHtml}</div>`;
+function searchableSelect(selectHtml, placeholder = "Gõ tên để tìm...") {
+  return `<div class="searchable-person-select">
+    ${selectHtml}
+    <div class="person-combobox">
+      ${icon("search")}
+      <input type="search" class="person-select-input" placeholder="${esc(placeholder)}" autocomplete="off" aria-autocomplete="list" aria-expanded="false">
+      <div class="person-select-results" role="listbox" hidden></div>
+    </div>
+  </div>`;
 }
 
 function bindSearchableSelects() {
-  $$(".person-select-filter").forEach((input) => {
-    input.addEventListener("input", () => {
-      const select = input.closest(".searchable-person-select")?.querySelector("select");
-      if (!select) return;
-      const query = normalizeText(input.value).trim();
-      Array.from(select.options).forEach((option, index) => {
-        option.hidden = index > 0 && option.value !== select.value && !!query && !normalizeText(option.textContent).includes(query);
-      });
+  $$(".searchable-person-select").forEach((root) => {
+    if (root.dataset.bound === "true") return;
+    root.dataset.bound = "true";
+    const select = root.querySelector("select");
+    const input = root.querySelector(".person-select-input");
+    const results = root.querySelector(".person-select-results");
+    if (!select || !input || !results) return;
+    input.disabled = select.disabled;
+
+    const selectedText = () => select.selectedOptions[0]?.value ? select.selectedOptions[0].textContent.trim() : "";
+    const closeResults = () => {
+      results.hidden = true;
+      input.setAttribute("aria-expanded", "false");
+    };
+    const choose = (value) => {
+      select.value = value;
+      input.value = selectedText();
+      select.dispatchEvent(new Event("change", { bubbles: true }));
+      closeResults();
+    };
+    const showResults = (rawQuery = "") => {
+      const query = normalizeText(rawQuery).trim();
+      const options = Array.from(select.options)
+        .filter((option) => !query || normalizeText(option.textContent).includes(query))
+        .slice(0, 5);
+      results.innerHTML = options.length
+        ? options.map((option) => `<button type="button" role="option" data-value="${esc(option.value)}" ${option.value === select.value ? 'class="active"' : ""}>${esc(option.textContent.trim())}</button>`).join("")
+        : `<p>Không tìm thấy tên phù hợp</p>`;
+      results.hidden = false;
+      input.setAttribute("aria-expanded", "true");
+    };
+
+    input.value = selectedText();
+    input.addEventListener("focus", () => {
+      input.select();
+      showResults("");
+    });
+    input.addEventListener("input", () => showResults(input.value));
+    input.addEventListener("keydown", (event) => {
+      const buttons = $$("button", results);
+      if (event.key === "Escape") return closeResults();
+      if (event.key === "Enter") {
+        event.preventDefault();
+        const button = buttons.find((item) => item.classList.contains("keyboard-active")) || buttons[0];
+        if (button) choose(button.dataset.value);
+        return;
+      }
+      if (!["ArrowDown", "ArrowUp"].includes(event.key) || !buttons.length) return;
+      event.preventDefault();
+      const current = buttons.findIndex((item) => item.classList.contains("keyboard-active"));
+      const next = event.key === "ArrowDown"
+        ? Math.min(buttons.length - 1, current + 1)
+        : Math.max(0, current < 0 ? buttons.length - 1 : current - 1);
+      buttons.forEach((item, index) => item.classList.toggle("keyboard-active", index === next));
+    });
+    results.addEventListener("pointerdown", (event) => event.preventDefault());
+    results.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-value]");
+      if (button) choose(button.dataset.value);
+    });
+    input.addEventListener("blur", () => {
+      window.setTimeout(() => {
+        input.value = selectedText();
+        closeResults();
+      }, 100);
     });
   });
 }
-
 function renderKinshipLookup() {
   const personA = personById(state.kinshipPersonAId);
   const personB = personById(state.kinshipPersonBId);
@@ -2101,13 +2176,13 @@ function renderDetail(id) {
         <button class="ghost-btn" id="closeDetail">Đóng</button>
       </div>
       <div class="drawer-body">
+        ${viewerIdentity ? `<div class="compact-personal-kinship"><strong>${viewerIdentity.id === person.id ? "Đây là hồ sơ của bạn" : `Bạn gọi ${esc(person.fullName)} là ${esc(personalSpeech?.call || "chưa xác định")}`}</strong></div>` : ""}
         <div class="profile-hero">
           ${photoHtml(person)}
           <div>
             <div class="chips">
               <span class="chip icon-chip">${genderIconHtml(person)}${esc(person.gender || "Khác")}</span>
               <span class="chip icon-chip ${status.className}">${icon(status.icon)}${esc(status.label)}</span>
-              ${viewerIdentity ? `<span class="chip personal-call-chip">${viewerIdentity.id === person.id ? "Hồ sơ của bạn" : `Bạn gọi: ${esc(personalSpeech.call)}`}</span>` : ""}
               ${status.label === "Đã mất" && (person.graveLocation || person.graveAddress) ? `<span class="chip grave-location-chip">Phần mộ: ${esc(person.graveLocation || person.graveAddress)}</span>` : ""}
               ${order ? `<span class="chip icon-chip">${icon("order")}${esc(order)}</span>` : ""}
               ${person.birthDate ? `<span class="chip">Sinh ${esc(formatDate(person.birthDate))}</span>` : ""}
@@ -2838,8 +2913,7 @@ function personForm(person) {
   const spouseId = (person.spouseIds || [])[0] || "";
   const galleryPhotos = cleanGallery(person.galleryPhotos);
   const relationshipDisabled = !adminCanEditAll() && !!person.id;
-  const identity = personById(state.currentAdmin?.personId);
-  const memberParentIds = new Set([identity?.id, ...(identity?.spouseIds || [])].filter(Boolean));
+  const memberParentIds = editablePersonIdsForCurrentUser();
   const parentPredicate = adminCanEditAll() || person.id ? (() => true) : ((item) => memberParentIds.has(item.id));
   return `
     <div class="form-grid">
@@ -2873,12 +2947,12 @@ function personForm(person) {
       <div class="field full"><label>Ảnh cá nhân</label><input name="photoFile" type="file" accept="image/*"><input name="photo" value="${esc(person.photo)}" placeholder="/uploads/photos/... hoặc link ảnh"></div>
       <div class="field full"><label>Ảnh khác, có thể chọn nhiều file</label><input name="galleryFiles" type="file" accept="image/*" multiple><textarea name="galleryPhotos" placeholder="Hoặc dán link ảnh, mỗi dòng một ảnh">${esc(galleryPhotos.join("\n"))}</textarea></div>
       <div class="field full"><label>Thành tích từ cấp huyện trở lên, mỗi dòng một thành tích</label><textarea name="achievements">${esc((person.achievements || []).join("\n"))}</textarea></div>
-      <div class="field full form-subhead"><h3>Thông tin phần mộ</h3><p>Chỉ nhập khi có thông tin chính xác; có thể để trống.</p></div>
-      <div class="field"><label>Khu/mộ phần</label><input name="graveLocation" value="${esc(person.graveLocation || "")}" placeholder="Ví dụ: Khu A, hàng 3, mộ số 12"></div>
-      <div class="field"><label>Địa chỉ phần mộ</label><input name="graveAddress" value="${esc(person.graveAddress || "")}" placeholder="Thôn/xã/huyện/tỉnh"></div>
-      <div class="field full"><label>Link vị trí bản đồ</label><input name="graveMapUrl" value="${esc(person.graveMapUrl || "")}" placeholder="https://maps.google.com/..."></div>
-      <div class="field full"><label>Ảnh phần mộ</label><input name="gravePhotoFile" type="file" accept="image/*"><input name="gravePhoto" value="${esc(person.gravePhoto || "")}" placeholder="Link ảnh phần mộ"></div>
-      <div class="field full"><label>Ghi chú phần mộ</label><textarea name="graveNotes" placeholder="Chỉ dẫn đường đi, ngày tu sửa hoặc thông tin cần lưu ý">${esc(person.graveNotes || "")}</textarea></div>
+      <div class="field full form-subhead ${person.deathDate ? "" : "role-hidden"}" data-death-fields><h3>Thông tin phần mộ</h3><p>Chỉ nhập khi có thông tin chính xác; có thể để trống.</p></div>
+      <div class="field ${person.deathDate ? "" : "role-hidden"}" data-death-fields><label>Khu/mộ phần</label><input name="graveLocation" value="${esc(person.graveLocation || "")}" placeholder="Ví dụ: Khu A, hàng 3, mộ số 12"></div>
+      <div class="field ${person.deathDate ? "" : "role-hidden"}" data-death-fields><label>Địa chỉ phần mộ</label><input name="graveAddress" value="${esc(person.graveAddress || "")}" placeholder="Thôn/xã/huyện/tỉnh"></div>
+      <div class="field full ${person.deathDate ? "" : "role-hidden"}" data-death-fields><label>Link vị trí bản đồ</label><input name="graveMapUrl" value="${esc(person.graveMapUrl || "")}" placeholder="https://maps.google.com/..."></div>
+      <div class="field full ${person.deathDate ? "" : "role-hidden"}" data-death-fields><label>Ảnh phần mộ</label><input name="gravePhotoFile" type="file" accept="image/*"><input name="gravePhoto" value="${esc(person.gravePhoto || "")}" placeholder="Link ảnh phần mộ"></div>
+      <div class="field full ${person.deathDate ? "" : "role-hidden"}" data-death-fields><label>Ghi chú phần mộ</label><textarea name="graveNotes" placeholder="Chỉ dẫn đường đi, ngày tu sửa hoặc thông tin cần lưu ý">${esc(person.graveNotes || "")}</textarea></div>
       <div class="field full"><label>Ghi chú</label><textarea name="notes">${esc(person.notes)}</textarea></div>
     </div>
   `;
@@ -2960,12 +3034,21 @@ function bindAdmin() {
   $("#personForm select[name=\"familyRole\"]")?.addEventListener("change", updateRoleFields);
   $("#personForm select[name=\"educationLevel\"]")?.addEventListener("change", updateEducationFields);
   $("#personForm select[name=\"husbandId\"]")?.addEventListener("change", updateInLawPreview);
+  $("#personForm input[name=\"deathDate\"]")?.addEventListener("input", updateDeathFields);
   $("#deleteBtn")?.addEventListener("click", deletePerson);
   $("#exportBtn")?.addEventListener("click", exportJson);
   $("#importJson")?.addEventListener("change", importJson);
   $("#importCsv")?.addEventListener("change", importCsv);
   updateRoleFields();
   updateEducationFields();
+  updateDeathFields();
+}
+
+function updateDeathFields() {
+  const form = $("#personForm");
+  if (!form) return;
+  const hasDeathDate = !!String(form.elements.deathDate?.value || "").trim();
+  $$('[data-death-fields]', form).forEach((item) => item.classList.toggle("role-hidden", !hasDeathDate));
 }
 
 async function reviewChangeRequest(id, decision) {

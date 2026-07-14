@@ -783,17 +783,24 @@ const MEMBER_PROFILE_FIELDS = [
 ];
 
 function memberEditableIds(data, personId) {
-  const ids = new Set();
   const identity = data.people.find((person) => person.id === personId);
-  if (!identity) return ids;
-  ids.add(identity.id);
-  const spouseIds = cleanArray(identity.spouseIds);
-  spouseIds.forEach((id) => ids.add(id));
-  data.people.forEach((person) => {
-    if (person.fatherId === identity.id || person.motherId === identity.id
-      || spouseIds.includes(person.fatherId) || spouseIds.includes(person.motherId)) ids.add(person.id);
-  });
-  return ids;
+  if (!identity) return new Set();
+  const lineageIds = new Set([identity.id, ...cleanArray(identity.spouseIds)]);
+  const editableIds = new Set(lineageIds);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    data.people.forEach((person) => {
+      if (!lineageIds.has(person.fatherId) && !lineageIds.has(person.motherId)) return;
+      if (!lineageIds.has(person.id)) {
+        lineageIds.add(person.id);
+        changed = true;
+      }
+      editableIds.add(person.id);
+      cleanArray(person.spouseIds).forEach((spouseId) => editableIds.add(spouseId));
+    });
+  }
+  return editableIds;
 }
 
 function memberChanges(existing, updated) {
@@ -908,8 +915,7 @@ async function handlePeopleCreate(request, env) {
   const data = await readFamily(env);
   if (!canEditAll(session)) {
     if (session.role !== "member" || !session.personId) return json({ error: "Tài khoản chưa được gắn danh tính nên chưa thể gửi thông tin." }, 403);
-    const identity = data.people.find((item) => item.id === session.personId);
-    const allowedParents = new Set([identity?.id, ...cleanArray(identity?.spouseIds)].filter(Boolean));
+    const allowedParents = memberEditableIds(data, session.personId);
     const selectedParents = [person.fatherId, person.motherId].filter(Boolean);
     if (!selectedParents.length || selectedParents.some((parentId) => !allowedParents.has(parentId))) {
       return json({ error: "Thành viên chỉ được đề nghị thêm con của mình hoặc của vợ/chồng mình." }, 403);

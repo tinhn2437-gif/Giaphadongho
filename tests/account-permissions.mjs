@@ -12,13 +12,16 @@ const family = {
   people: [
     { id: "self", spouseIds: ["wife"] },
     { id: "wife", spouseIds: ["self"] },
-    { id: "child-a", fatherId: "self", motherId: "wife" },
+    { id: "child-a", fatherId: "self", motherId: "wife", spouseIds: ["child-spouse"] },
+    { id: "child-spouse", spouseIds: ["child-a"] },
     { id: "child-b", fatherId: "", motherId: "wife" },
+    { id: "grandchild", fatherId: "child-a", motherId: "child-spouse" },
+    { id: "great-grandchild", fatherId: "grandchild" },
     { id: "sibling", fatherId: "grandfather", motherId: "grandmother" },
   ],
 };
 const editable = api.memberEditableIds(family, "self");
-assert.deepEqual([...editable].sort(), ["child-a", "child-b", "self", "wife"]);
+assert.deepEqual([...editable].sort(), ["child-a", "child-b", "child-spouse", "grandchild", "great-grandchild", "self", "wife"]);
 assert.equal(api.memberEditableIds(family, "missing").size, 0);
 
 const normalized = api.normalizePerson({

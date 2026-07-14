@@ -2706,3 +2706,315 @@ th {
     display: none;
   }
 }
+
+/* Integrated person picker and compact mobile layout */
+.searchable-person-select {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.searchable-person-select > select {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+  pointer-events: none;
+}
+
+.person-combobox {
+  position: relative;
+  min-width: 0;
+}
+
+.person-combobox > .icon {
+  position: absolute;
+  top: 12px;
+  left: 11px;
+  z-index: 2;
+  width: 17px;
+  height: 17px;
+  color: var(--muted);
+  pointer-events: none;
+}
+
+.person-select-input {
+  width: 100%;
+  min-height: 42px;
+  padding: 9px 11px 9px 38px;
+  border: 1px solid rgba(151, 91, 34, 0.48);
+  border-radius: 8px;
+  outline: 0;
+  background: rgba(255, 253, 243, 0.98);
+  color: var(--ink);
+}
+
+.person-select-input:focus {
+  border-color: #9c4a23;
+  box-shadow: 0 0 0 3px rgba(156, 74, 35, 0.12);
+}
+
+.person-select-input:disabled {
+  cursor: not-allowed;
+  opacity: 0.72;
+}
+
+.person-select-results {
+  position: absolute;
+  top: calc(100% + 5px);
+  right: 0;
+  left: 0;
+  z-index: 80;
+  max-height: 230px;
+  overflow-y: auto;
+  padding: 5px;
+  border: 1px solid rgba(151, 91, 34, 0.5);
+  border-radius: 8px;
+  background: #fffdf3;
+  box-shadow: 0 14px 30px rgba(70, 38, 13, 0.22);
+}
+
+.person-select-results[hidden] {
+  display: none;
+}
+
+.person-select-results button {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink);
+  text-align: left;
+}
+
+.person-select-results button:hover,
+.person-select-results button.active,
+.person-select-results button.keyboard-active {
+  background: #ffedb4;
+}
+
+.person-select-results p {
+  margin: 0;
+  padding: 10px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.compact-personal-kinship {
+  margin: 0 0 12px;
+  padding: 8px 10px;
+  border: 1px solid #d9a441;
+  border-left: 3px solid #9f2f1b;
+  border-radius: 6px;
+  background: #fff4c9;
+  color: #5e2818;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+@media (max-width: 640px) {
+  body {
+    overflow-x: hidden;
+    font-size: 13px;
+  }
+
+  .topbar {
+    min-height: 54px;
+    gap: 6px;
+    padding: 6px 8px;
+  }
+
+  .brand {
+    min-width: 0;
+    gap: 7px;
+  }
+
+  .brand-mark {
+    width: 30px;
+    height: 30px;
+    flex: 0 0 30px;
+    font-size: 13px;
+  }
+
+  .brand h1 {
+    max-width: 46vw;
+    overflow: hidden;
+    font-size: 16px;
+    line-height: 1.15;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .brand p {
+    max-width: 46vw;
+    overflow: hidden;
+    font-size: 10px;
+    line-height: 1.25;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .nav-actions {
+    flex: 0 0 auto;
+    gap: 5px;
+  }
+
+  .nav-actions a[href="/"],
+  .nav-actions a[href="./"] {
+    display: none;
+  }
+
+  .nav-actions .btn,
+  .nav-actions .ghost-btn {
+    min-height: 34px;
+    padding: 6px 9px;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  .workspace {
+    padding: 6px;
+  }
+
+  .detail-drawer {
+    top: 56px;
+    right: 0;
+    bottom: 0;
+    width: 100vw;
+    border-radius: 0;
+  }
+
+  .drawer-head {
+    gap: 8px;
+    padding: 10px 12px;
+  }
+
+  .drawer-head h2 {
+    margin: 0;
+    font-size: 22px;
+    line-height: 1.2;
+  }
+
+  .drawer-head .notice {
+    margin-top: 4px;
+    font-size: 12px;
+  }
+
+  .drawer-head .ghost-btn {
+    min-height: 38px;
+    padding: 7px 10px;
+  }
+
+  .drawer-body {
+    padding: 10px 12px 24px;
+  }
+
+  .compact-personal-kinship {
+    margin-bottom: 10px;
+    padding: 7px 9px;
+    font-size: 12px;
+  }
+
+  .profile-hero {
+    grid-template-columns: 82px minmax(0, 1fr);
+    gap: 10px;
+    align-items: start;
+  }
+
+  .profile-hero > button:first-child,
+  .profile-hero > .profile-photo {
+    width: 82px;
+    height: 106px;
+  }
+
+  .chips {
+    gap: 5px;
+    margin-top: 3px;
+  }
+
+  .chip {
+    padding: 5px 7px;
+    font-size: 11px;
+  }
+
+  .info-grid {
+    grid-template-columns: minmax(92px, 34%) minmax(0, 1fr);
+    gap: 7px 10px;
+    margin-top: 14px;
+  }
+
+  .info-grid dt,
+  .info-grid dd {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+
+  .admin-layout {
+    gap: 8px;
+  }
+
+  .panel-head,
+  .form-wrap,
+  .viewer-account-box,
+  .change-requests-box {
+    padding: 11px;
+  }
+
+  .person-list {
+    height: 280px;
+    min-height: 280px;
+  }
+
+  .form-wrap {
+    max-height: none;
+  }
+
+  .form-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 11px;
+  }
+
+  .field.full {
+    grid-column: auto;
+  }
+
+  .field input,
+  .field select,
+  .field textarea,
+  .person-select-input {
+    min-height: 40px;
+  }
+
+  .person-select-results {
+    max-height: 220px;
+  }
+
+  .kinship-panel {
+    width: calc(100vw - 16px);
+    max-height: calc(100dvh - 16px);
+    padding: 12px;
+  }
+
+  .kinship-head {
+    gap: 8px;
+  }
+
+  .kinship-head h2 {
+    font-size: 20px;
+  }
+
+  .kinship-head p {
+    font-size: 11px;
+  }
+
+  .kinship-fields {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 10px;
+  }
+}
