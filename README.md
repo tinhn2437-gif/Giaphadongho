@@ -1,9 +1,3 @@
-# Web gia pha dong ho
-
-Ung dung gom hai phan:
-
-- Trang xem cong khai: `http://127.0.0.1:8000/`
-- Trang admin: `http://127.0.0.1:8000/admin`
 
 ## Chay web
 
