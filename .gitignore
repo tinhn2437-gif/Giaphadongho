@@ -1,6 +1,13 @@
 __pycache__/
 *.pyc
 .env
+wrangler.toml
+
+# Ho so van hanh va ban sao du lieu chi duoc luu rieng, khong dua len Git.
+HO-SO-BAN-GIAO-RIENG.md
+backups/
+*.backup.sql
+*.backup.zip
 
 logs/
 tools/

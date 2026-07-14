@@ -1,0 +1,8 @@
+name = "<TEN_DU_AN_PAGES>"
+compatibility_date = "2026-07-09"
+pages_build_output_dir = "deploy-public"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "<TEN_CO_SO_DU_LIEU_D1>"
+database_id = "<DATABASE_ID_DO_CLOUDFLARE_CAP>"
