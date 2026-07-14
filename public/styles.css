@@ -2743,10 +2743,10 @@ th {
   pointer-events: none;
 }
 
-.person-select-input {
+.person-combobox input.person-select-input {
   width: 100%;
   min-height: 42px;
-  padding: 9px 11px 9px 38px;
+  padding: 9px 11px 9px 42px;
   border: 1px solid rgba(151, 91, 34, 0.48);
   border-radius: 8px;
   outline: 0;
@@ -2754,12 +2754,12 @@ th {
   color: var(--ink);
 }
 
-.person-select-input:focus {
+.person-combobox input.person-select-input:focus {
   border-color: #9c4a23;
   box-shadow: 0 0 0 3px rgba(156, 74, 35, 0.12);
 }
 
-.person-select-input:disabled {
+.person-combobox input.person-select-input:disabled {
   cursor: not-allowed;
   opacity: 0.72;
 }
