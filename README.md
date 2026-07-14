@@ -21,6 +21,17 @@ $env:FAMILY_SECRET="chuoi_bi_mat_dai"
 python server.py
 ```
 
+## Danh tinh va phan quyen tren Cloudflare
+
+Moi tai khoan co the duoc gan voi mot nguoi trong gia pha de tinh cach xung ho ca nhan. Cac quyen:
+
+- `admin`: quan ly tai khoan, duyet de nghi va sua toan bo gia pha.
+- `clan_head`: Truong ho, sua truc tiep toan bo thong tin gia pha.
+- `member`: chi gui de nghi sua ho so cua minh, vo/chong va con; Admin phai duyet moi cong khai.
+- `viewer`: chi dang nhap va xem.
+
+Bang `family_change_requests` luu lich su cho duyet/da duyet/tu choi. Tai khoan Admin goc khong the bi xoa hoac ha quyen.
+
 Neu muon tam thoi tat dang nhap trang xem khi chay server:
 
 ```powershell

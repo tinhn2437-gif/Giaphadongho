@@ -16,6 +16,131 @@
   --family-bg: url("images/nen-gia-pha-nguyen-huu.png");
 }
 
+.personal-call-chip {
+  border: 1px solid rgba(147, 55, 28, 0.25);
+  background: #ffe6aa;
+  color: #7b2516;
+}
+
+.grave-location-chip {
+  max-width: 100%;
+  border: 1px solid rgba(103, 81, 45, 0.28);
+  background: #f5ead0;
+  color: #5f4a2e;
+  overflow-wrap: anywhere;
+}
+
+.grave-section {
+  margin-top: 20px;
+  padding-top: 18px;
+  border-top: 1px solid #dfbd72;
+}
+
+.grave-section h3,
+.form-subhead h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 12px;
+  color: #702617;
+}
+
+.grave-section h3 .icon { width: 20px; height: 20px; }
+
+.grave-photo {
+  width: 150px;
+  height: 112px;
+  margin-bottom: 14px;
+}
+
+.grave-photo img { width: 100%; height: 100%; object-fit: cover; }
+
+.text-link { color: #8f2c19; font-weight: 700; }
+
+.form-subhead {
+  margin-top: 8px;
+  padding-top: 18px;
+  border-top: 1px solid #dfbd72;
+}
+
+.form-subhead p { margin: -6px 0 0; color: #756044; }
+
+.permission-note {
+  margin: 12px 0 0;
+  padding: 12px;
+  border-left: 3px solid #c17822;
+  background: #fff3cf;
+  color: #66492d;
+  line-height: 1.45;
+}
+
+.change-requests-box { padding: 18px; border-top: 1px solid #dfbd72; }
+
+.change-requests-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.change-requests-head h3 { margin: 0; }
+
+.change-requests-head span {
+  color: #7b5939;
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.change-request-list { display: grid; gap: 9px; }
+
+.change-request {
+  display: grid;
+  gap: 9px;
+  padding: 12px;
+  border: 1px solid #ddbf82;
+  border-left: 4px solid #be7b21;
+  border-radius: 6px;
+  background: #fffaf0;
+}
+
+.change-request.approved { border-left-color: #168261; }
+.change-request.rejected { border-left-color: #b63b2d; }
+.change-request > div:first-child { display: grid; gap: 3px; }
+
+.change-request span,
+.change-request p {
+  margin: 0;
+  color: #725c41;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.change-preview {
+  display: grid;
+  grid-template-columns: minmax(86px, auto) minmax(0, 1fr);
+  gap: 4px 10px;
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.change-preview dt { color: #806849; font-weight: 700; }
+.change-preview dd { min-width: 0; margin: 0; overflow-wrap: anywhere; color: #412719; }
+
+.request-actions { display: flex; gap: 8px; }
+.request-actions button { min-height: 38px; padding: 8px 14px; }
+
+.viewer-account-form,
+.viewer-account-row { grid-template-columns: minmax(130px, 1fr); }
+
+.viewer-account-form select[name="personId"],
+.viewer-account-row select[name="personId"] { min-width: 0; }
+
+@media (max-width: 720px) {
+  .grave-photo { width: 120px; height: 90px; }
+}
+
 * {
   box-sizing: border-box;
 }
@@ -1087,10 +1212,58 @@ tr:hover td {
 }
 
 .person-list {
-  flex: 1 1 auto;
-  min-height: 220px;
+  flex: 0 0 auto;
+  height: 330px;
+  min-height: 280px;
   overflow: auto;
   padding: 8px;
+  scrollbar-gutter: stable;
+  border-bottom: 1px solid var(--line);
+}
+
+.searchable-person-select {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.select-search {
+  position: relative;
+  display: block;
+  min-width: 0;
+}
+
+.select-search .icon {
+  position: absolute;
+  top: 50%;
+  left: 10px;
+  z-index: 1;
+  width: 16px;
+  height: 16px;
+  color: var(--muted);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.select-search .person-select-filter {
+  width: 100%;
+  min-height: 36px;
+  padding: 7px 10px 7px 34px;
+  border: 1px solid rgba(151, 91, 34, 0.42);
+  border-radius: 8px;
+  outline: 0;
+  background: rgba(255, 253, 243, 0.95);
+  color: var(--ink);
+}
+
+.select-search .person-select-filter:focus {
+  border-color: #9c4a23;
+  box-shadow: 0 0 0 3px rgba(156, 74, 35, 0.12);
+}
+
+.searchable-person-select > select {
+  width: 100%;
+  min-width: 0;
 }
 
 .viewer-account-box {
@@ -1449,6 +1622,11 @@ tr:hover td {
 
   .admin-panel {
     min-height: auto;
+  }
+
+  .person-list {
+    height: 320px;
+    min-height: 320px;
   }
 
   .form-grid {

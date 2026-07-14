@@ -180,10 +180,48 @@ async function bodyJson(request) {
   }
 }
 
+function mutationOriginAllowed(request) {
+  const origin = request.headers.get("Origin");
+  if (!origin) return true;
+  try {
+    return new URL(origin).origin === new URL(request.url).origin;
+  } catch (error) {
+    return false;
+  }
+}
+
 async function getUser(env, username) {
-  return env.DB.prepare("SELECT id, username, display_name, COALESCE(role, 'viewer') AS role, password_hash, salt, iterations FROM users WHERE username = ?")
+  return env.DB.prepare("SELECT id, username, display_name, COALESCE(role, 'viewer') AS role, COALESCE(person_id, '') AS person_id, password_hash, salt, iterations FROM users WHERE username = ?")
     .bind(username)
     .first();
+}
+
+function normalizeAccountRole(value) {
+  const role = clean(value);
+  return ["viewer", "member", "clan_head", "admin"].includes(role) ? role : "viewer";
+}
+
+function publicSessionUser(user) {
+  if (!user) return null;
+  return {
+    username: user.username,
+    displayName: user.displayName || user.display_name || user.username,
+    role: normalizeAccountRole(user.role),
+    personId: clean(user.personId || user.person_id),
+    isRoot: !!user.isRoot,
+  };
+}
+
+async function getSetting(env, key) {
+  const row = await env.DB.prepare("SELECT value FROM app_settings WHERE key = ?").bind(key).first();
+  return clean(row?.value);
+}
+
+async function setSetting(env, key, value) {
+  const now = new Date().toISOString();
+  await env.DB.prepare(
+    "INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+  ).bind(key, clean(value), now).run();
 }
 
 async function readFamily(env) {
@@ -205,6 +243,11 @@ async function readFamily(env) {
       academicDegree,
       academicRank,
       academicTitle: academicRank || academicDegree,
+      graveLocation: clean(person.graveLocation),
+      graveAddress: clean(person.graveAddress),
+      graveMapUrl: clean(person.graveMapUrl),
+      graveNotes: clean(person.graveNotes),
+      gravePhoto: clean(person.gravePhoto),
     };
   });
   return data;
@@ -220,8 +263,21 @@ async function writeFamily(env, data) {
   await env.DB.prepare(
     "INSERT INTO family_data (id, json, updated_at) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET json = excluded.json, updated_at = excluded.updated_at",
   ).bind(FAMILY_ROW_ID, JSON.stringify(next), next.updatedAt).run();
+  await reconcileAccountIdentities(env, next);
   await pruneUnusedPhotos(env, next);
   return next;
+}
+
+async function reconcileAccountIdentities(env, data) {
+  const validIds = new Set((data.people || []).map((person) => person.id));
+  const users = await env.DB.prepare("SELECT username, person_id FROM users WHERE person_id IS NOT NULL AND person_id <> ''").all();
+  for (const user of users.results || []) {
+    if (!validIds.has(user.person_id)) {
+      await env.DB.prepare("UPDATE users SET person_id = NULL WHERE username = ?").bind(user.username).run();
+    }
+  }
+  const rootPersonId = await getSetting(env, "root_person_id");
+  if (rootPersonId && !validIds.has(rootPersonId)) await setSetting(env, "root_person_id", "");
 }
 
 function normalizePerson(payload, existingId = "") {
@@ -272,6 +328,11 @@ function normalizePerson(payload, existingId = "") {
     spouseIds: cleanArray(payload.spouseIds),
     photo: clean(payload.photo),
     galleryPhotos: cleanArray(payload.galleryPhotos),
+    graveLocation: clean(payload.graveLocation),
+    graveAddress: clean(payload.graveAddress),
+    graveMapUrl: clean(payload.graveMapUrl),
+    graveNotes: clean(payload.graveNotes),
+    gravePhoto: clean(payload.gravePhoto),
     notes: clean(payload.notes),
   };
   if (person.familyRole !== "Con gái") {
@@ -311,6 +372,9 @@ async function ensureExternalPersonPhotos(env, person) {
     gallery.push(String(url).startsWith("data:image/") ? await storePhotoDataUrl(env, url) : url);
   }
   person.galleryPhotos = [...new Set(gallery)];
+  if (String(person.gravePhoto || "").startsWith("data:image/")) {
+    person.gravePhoto = await storePhotoDataUrl(env, person.gravePhoto);
+  }
   return person;
 }
 
@@ -322,6 +386,7 @@ function referencedPhotoIds(data) {
   };
   (Array.isArray(data.people) ? data.people : []).forEach((person) => {
     add(person.photo);
+    add(person.gravePhoto);
     cleanArray(person.galleryPhotos).forEach(add);
   });
   return ids;
@@ -329,6 +394,24 @@ function referencedPhotoIds(data) {
 
 async function pruneUnusedPhotos(env, data) {
   const keep = referencedPhotoIds(data);
+  const requests = await env.DB.prepare(
+    "SELECT payload_json FROM family_change_requests WHERE status = 'pending'",
+  ).all();
+  (requests.results || []).forEach((row) => {
+    try {
+      const payload = JSON.parse(row.payload_json || "{}");
+      const person = payload.person || payload.changes || {};
+      const add = (url) => {
+        const match = String(url || "").match(/^\/api\/photos\/([^/?#]+)/);
+        if (match) keep.add(match[1]);
+      };
+      add(person.photo);
+      add(person.gravePhoto);
+      cleanArray(person.galleryPhotos).forEach(add);
+    } catch (error) {
+      // A malformed pending request is ignored and will be rejected during review.
+    }
+  });
   const rows = await env.DB.prepare("SELECT id FROM photos").all();
   const unused = (rows.results || []).map((row) => row.id).filter((id) => !keep.has(id));
   for (const id of unused) {
@@ -357,7 +440,7 @@ function familyDiagnostics(data) {
       if (!spouse) findings.push({ type: "bad-spouse", name: person.fullName, id: spouseId });
       else if (!cleanArray(spouse.spouseIds).includes(person.id)) findings.push({ type: "one-way-spouse", name: person.fullName, spouseName: spouse.fullName });
     });
-    [person.photo, ...cleanArray(person.galleryPhotos)].forEach((url) => {
+    [person.photo, person.gravePhoto, ...cleanArray(person.galleryPhotos)].forEach((url) => {
       if (String(url || "").startsWith("data:image/")) findings.push({ type: "embedded-photo", name: person.fullName });
     });
   });
@@ -387,7 +470,16 @@ function normalizeRelationships(data) {
 }
 
 async function isAdmin(request, env) {
-  return !!await adminSession(request, env);
+  const session = await adminSession(request, env);
+  return !!session && (session.isRoot || session.role === "admin");
+}
+
+function canEditAll(session) {
+  return !!session && (session.isRoot || session.role === "admin" || session.role === "clan_head");
+}
+
+function canManageAccounts(session) {
+  return !!session && (session.isRoot || session.role === "admin");
 }
 
 async function adminSession(request, env) {
@@ -395,21 +487,28 @@ async function adminSession(request, env) {
   if (!username) return null;
   const rootUsername = normalizeUsername(env.FAMILY_ADMIN_USER || "admin");
   if (username === rootUsername) {
-    return { username: rootUsername, displayName: "Admin gốc", role: "admin", isRoot: true };
+    return {
+      username: rootUsername,
+      displayName: "Admin gốc",
+      role: "admin",
+      personId: await getSetting(env, "root_person_id"),
+      isRoot: true,
+    };
   }
   const user = await getUser(env, username);
-  if (!user || user.role !== "admin") return null;
+  if (!user || !["admin", "clan_head", "member"].includes(user.role)) return null;
   return {
     username: user.username,
     displayName: user.display_name,
-    role: "admin",
+    role: normalizeAccountRole(user.role),
+    personId: clean(user.person_id),
     isRoot: false,
   };
 }
 
 async function viewerUser(request, env) {
   const admin = await adminSession(request, env);
-  if (admin) return { username: admin.username, display_name: admin.displayName, role: "admin" };
+  if (admin) return { username: admin.username, display_name: admin.displayName, role: admin.role, person_id: admin.personId, isRoot: admin.isRoot };
   const username = await readSignedCookie(request, env, VIEWER_COOKIE, "viewer");
   if (!username) return null;
   return getUser(env, normalizeUsername(username));
@@ -422,52 +521,66 @@ async function handleAdminLogin(request, env) {
   const adminUser = normalizeUsername(env.FAMILY_ADMIN_USER || "admin");
   const adminPassword = env.FAMILY_ADMIN_PASSWORD || "";
   let displayName = "Admin gốc";
+  let role = "admin";
+  let personId = "";
   if (username === adminUser) {
     if (!adminPassword || password !== adminPassword) {
       return json({ error: "Sai tài khoản hoặc mật khẩu." }, 401);
     }
   } else {
     const user = await getUser(env, username);
-    if (!user || user.role !== "admin") return json({ error: "Sai tài khoản hoặc mật khẩu." }, 401);
+    if (!user || !["admin", "clan_head", "member"].includes(user.role)) return json({ error: "Tài khoản này không có quyền vào khu cập nhật." }, 403);
     const expected = await passwordHash(password, fromBase64Url(user.salt), user.iterations || PASSWORD_ITERATIONS);
     if (expected !== user.password_hash) return json({ error: "Sai tài khoản hoặc mật khẩu." }, 401);
     displayName = user.display_name;
+    role = normalizeAccountRole(user.role);
+    personId = clean(user.person_id);
   }
+  if (username === adminUser) personId = await getSetting(env, "root_person_id");
   const token = await signPayload(env, {
     scope: "admin",
     user: username,
     exp: Math.floor(Date.now() / 1000) + 60 * 60 * 24 * 7,
   });
-  return json({ ok: true, user: { username, displayName, role: "admin" } }, 200, { "Set-Cookie": makeCookie(ADMIN_COOKIE, token, 604800) });
+  return json({ ok: true, user: { username, displayName, role, personId, isRoot: username === adminUser } }, 200, { "Set-Cookie": makeCookie(ADMIN_COOKIE, token, 604800) });
 }
 
 async function createUserAccount(env, payload) {
   const username = normalizeUsername(payload.username);
   const password = clean(payload.password);
   const displayName = clean(payload.displayName).slice(0, 80) || username;
-  const role = clean(payload.role) === "admin" ? "admin" : "viewer";
+  const role = normalizeAccountRole(payload.role);
+  const personId = clean(payload.personId);
   const rootUsername = normalizeUsername(env.FAMILY_ADMIN_USER || "admin");
   if (username.length < 3) return { error: "Tài khoản cần từ 3 ký tự trở lên.", status: 400 };
   if (password.length < 6) return { error: "Mật khẩu cần từ 6 ký tự trở lên.", status: 400 };
   if (username === rootUsername) return { error: "Không thể tạo trùng tài khoản admin gốc.", status: 409 };
   if (await getUser(env, username)) return { error: "Tài khoản này đã tồn tại.", status: 409 };
+  if (["member", "clan_head"].includes(role) && !personId) {
+    return { error: "Tài khoản Thành viên hoặc Trưởng họ phải được gắn với một người trong gia phả.", status: 400 };
+  }
+  if (personId) {
+    const family = await readFamily(env);
+    if (!family.people.some((person) => person.id === personId)) return { error: "Không tìm thấy danh tính đã chọn trong gia phả.", status: 400 };
+  }
 
   const salt = crypto.getRandomValues(new Uint8Array(16));
   const hash = await passwordHash(password, salt, PASSWORD_ITERATIONS);
   await env.DB.prepare(
-    "INSERT INTO users (id, username, display_name, role, password_hash, salt, iterations, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+    "INSERT INTO users (id, username, display_name, role, person_id, password_hash, salt, iterations, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
   ).bind(
     randomId("u"),
     username,
     displayName,
     role,
+    personId || null,
     hash,
     base64Url(salt),
     PASSWORD_ITERATIONS,
     new Date().toISOString(),
   ).run();
 
-  return { user: { username, displayName, role }, status: 201 };
+  return { user: { username, displayName, role, personId }, status: 201 };
 }
 
 async function handleRegister() {
@@ -476,13 +589,13 @@ async function handleRegister() {
 
 async function handleAdminUsersList(request, env) {
   const admin = await adminSession(request, env);
-  if (!admin) return json({ error: "Bạn cần đăng nhập admin." }, 401);
+  if (!canManageAccounts(admin)) return json({ error: "Chỉ Admin được quản lý tài khoản." }, admin ? 403 : 401);
   const rootUsername = normalizeUsername(env.FAMILY_ADMIN_USER || "admin");
   const result = await env.DB.prepare(
-    "SELECT username, display_name, COALESCE(role, 'viewer') AS role, created_at FROM users ORDER BY created_at DESC",
+    "SELECT username, display_name, COALESCE(role, 'viewer') AS role, COALESCE(person_id, '') AS person_id, created_at FROM users ORDER BY created_at DESC",
   ).all();
   return json({
-    currentUser: { username: admin.username, isRoot: admin.isRoot },
+    currentUser: publicSessionUser(admin),
     users: [
       {
         username: rootUsername,
@@ -490,12 +603,14 @@ async function handleAdminUsersList(request, env) {
         role: "admin",
         locked: true,
         isRoot: true,
+        personId: await getSetting(env, "root_person_id"),
         createdAt: "",
       },
       ...(result.results || []).map((user) => ({
         username: user.username,
         displayName: user.display_name,
         role: user.role || "viewer",
+        personId: clean(user.person_id),
         locked: false,
         isRoot: false,
         createdAt: user.created_at,
@@ -505,7 +620,8 @@ async function handleAdminUsersList(request, env) {
 }
 
 async function handleAdminUsersCreate(request, env) {
-  if (!await isAdmin(request, env)) return json({ error: "Bạn cần đăng nhập admin." }, 401);
+  const admin = await adminSession(request, env);
+  if (!canManageAccounts(admin)) return json({ error: "Chỉ Admin được tạo tài khoản." }, admin ? 403 : 401);
   const result = await createUserAccount(env, await bodyJson(request));
   if (result.error) return json({ error: result.error }, result.status);
   return json({ ok: true, user: result.user }, result.status);
@@ -513,17 +629,27 @@ async function handleAdminUsersCreate(request, env) {
 
 async function handleAdminUsersUpdate(request, env, username) {
   const admin = await adminSession(request, env);
-  if (!admin) return json({ error: "Bạn cần đăng nhập admin." }, 401);
+  if (!canManageAccounts(admin)) return json({ error: "Chỉ Admin được sửa tài khoản." }, admin ? 403 : 401);
   const cleanUsername = normalizeUsername(username);
   const rootUsername = normalizeUsername(env.FAMILY_ADMIN_USER || "admin");
   if (!cleanUsername) return json({ error: "Thiếu tài khoản cần sửa." }, 400);
-  if (cleanUsername === rootUsername) return json({ error: "Không thể sửa tài khoản admin gốc." }, 403);
+  const payload = await bodyJson(request);
+  const personId = clean(payload.personId);
+  if (personId) {
+    const family = await readFamily(env);
+    if (!family.people.some((person) => person.id === personId)) return json({ error: "Không tìm thấy danh tính đã chọn." }, 400);
+  }
+  if (cleanUsername === rootUsername) {
+    if (!admin.isRoot) return json({ error: "Chỉ Admin gốc được gắn danh tính cho chính mình." }, 403);
+    await setSetting(env, "root_person_id", personId);
+    return json({ ok: true, user: { username: rootUsername, displayName: "Admin gốc", role: "admin", personId, isRoot: true } });
+  }
 
   const user = await getUser(env, cleanUsername);
   if (!user) return json({ error: "Không tìm thấy tài khoản." }, 404);
-  const payload = await bodyJson(request);
   const displayName = clean(payload.displayName).slice(0, 80) || cleanUsername;
-  const role = clean(payload.role) === "admin" ? "admin" : "viewer";
+  const role = normalizeAccountRole(payload.role);
+  if (["member", "clan_head"].includes(role) && !personId) return json({ error: "Vai trò này phải được gắn với một người trong gia phả." }, 400);
   if (admin.username === cleanUsername && user.role === "admin" && role !== "admin") {
     return json({ error: "Không thể tự hạ quyền tài khoản đang đăng nhập." }, 400);
   }
@@ -534,20 +660,20 @@ async function handleAdminUsersUpdate(request, env, username) {
     const salt = crypto.getRandomValues(new Uint8Array(16));
     const hash = await passwordHash(password, salt, PASSWORD_ITERATIONS);
     await env.DB.prepare(
-      "UPDATE users SET display_name = ?, role = ?, password_hash = ?, salt = ?, iterations = ? WHERE username = ?",
-    ).bind(displayName, role, hash, base64Url(salt), PASSWORD_ITERATIONS, cleanUsername).run();
+      "UPDATE users SET display_name = ?, role = ?, person_id = ?, password_hash = ?, salt = ?, iterations = ? WHERE username = ?",
+    ).bind(displayName, role, personId || null, hash, base64Url(salt), PASSWORD_ITERATIONS, cleanUsername).run();
   } else {
     await env.DB.prepare(
-      "UPDATE users SET display_name = ?, role = ? WHERE username = ?",
-    ).bind(displayName, role, cleanUsername).run();
+      "UPDATE users SET display_name = ?, role = ?, person_id = ? WHERE username = ?",
+    ).bind(displayName, role, personId || null, cleanUsername).run();
   }
 
-  return json({ ok: true, user: { username: cleanUsername, displayName, role } });
+  return json({ ok: true, user: { username: cleanUsername, displayName, role, personId } });
 }
 
 async function handleAdminUsersDelete(request, env, username) {
   const admin = await adminSession(request, env);
-  if (!admin) return json({ error: "Bạn cần đăng nhập admin." }, 401);
+  if (!canManageAccounts(admin)) return json({ error: "Chỉ Admin được xóa tài khoản." }, admin ? 403 : 401);
   const cleanUsername = normalizeUsername(username);
   const rootUsername = normalizeUsername(env.FAMILY_ADMIN_USER || "admin");
   if (!cleanUsername) return json({ error: "Thiếu tài khoản cần xóa." }, 400);
@@ -558,7 +684,8 @@ async function handleAdminUsersDelete(request, env, username) {
 }
 
 async function handleAdminStorage(request, env) {
-  if (!await isAdmin(request, env)) return json({ error: "Bạn cần đăng nhập admin." }, 401);
+  const session = await adminSession(request, env);
+  if (!canEditAll(session)) return json({ error: "Bạn không có quyền xem dung lượng quản trị." }, session ? 403 : 401);
   const family = await env.DB.prepare(
     "SELECT COALESCE(SUM(LENGTH(json)), 0) AS bytes, COUNT(*) AS rows FROM family_data",
   ).first();
@@ -599,7 +726,8 @@ async function handleAdminStorage(request, env) {
 }
 
 async function handleAdminDiagnostics(request, env) {
-  if (!await isAdmin(request, env)) return json({ error: "Bạn cần đăng nhập admin." }, 401);
+  const session = await adminSession(request, env);
+  if (!canEditAll(session)) return json({ error: "Bạn không có quyền kiểm tra dữ liệu." }, session ? 403 : 401);
   const data = await readFamily(env);
   return json({
     ok: true,
@@ -618,7 +746,7 @@ async function handleViewerLogin(request, env) {
   if (expected !== user.password_hash) return json({ error: "Sai tài khoản hoặc mật khẩu." }, 401);
   return sendViewerLogin(env, username, {
     ok: true,
-    user: { username: user.username, displayName: user.display_name },
+    user: publicSessionUser(user),
   });
 }
 
@@ -632,16 +760,138 @@ async function sendViewerLogin(env, username, data, status = 200) {
 }
 
 async function handleMe(request, env) {
-  return json({ authenticated: await isAdmin(request, env) });
+  const session = await adminSession(request, env);
+  return json({ authenticated: !!session, user: publicSessionUser(session) });
 }
 
 async function handleViewerSession(request, env) {
   const user = await viewerUser(request, env);
   return json({
     authenticated: !!user,
-    user: user ? { username: user.username, displayName: user.display_name } : null,
+    user: publicSessionUser(user),
     registrationEnabled: false,
   });
+}
+
+const MEMBER_PROFILE_FIELDS = [
+  "fullName", "gender", "birthDate", "deathDate", "marriageYear", "familyRole",
+  "hometown", "currentResidence", "daughterInLawFather", "daughterInLawMother",
+  "daughterHusbandName", "daughterMarriedAddress", "daughterChildrenCount", "address",
+  "job", "educationLevel", "academicDegree", "academicRank", "academicTitle", "achievements",
+  "photo", "galleryPhotos", "graveLocation", "graveAddress", "graveMapUrl", "graveNotes",
+  "gravePhoto", "notes",
+];
+
+function memberEditableIds(data, personId) {
+  const ids = new Set();
+  const identity = data.people.find((person) => person.id === personId);
+  if (!identity) return ids;
+  ids.add(identity.id);
+  const spouseIds = cleanArray(identity.spouseIds);
+  spouseIds.forEach((id) => ids.add(id));
+  data.people.forEach((person) => {
+    if (person.fatherId === identity.id || person.motherId === identity.id
+      || spouseIds.includes(person.fatherId) || spouseIds.includes(person.motherId)) ids.add(person.id);
+  });
+  return ids;
+}
+
+function memberChanges(existing, updated) {
+  const changes = {};
+  MEMBER_PROFILE_FIELDS.forEach((field) => {
+    if (JSON.stringify(existing[field] ?? "") !== JSON.stringify(updated[field] ?? "")) changes[field] = updated[field];
+  });
+  return changes;
+}
+
+async function saveChangeRequest(env, session, action, personId, payload) {
+  const now = new Date().toISOString();
+  const existing = await env.DB.prepare(
+    "SELECT id FROM family_change_requests WHERE username = ? AND person_id = ? AND status = 'pending' ORDER BY created_at DESC LIMIT 1",
+  ).bind(session.username, personId).first();
+  const payloadJson = JSON.stringify(payload);
+  if (existing?.id) {
+    await env.DB.prepare(
+      "UPDATE family_change_requests SET action = ?, payload_json = ?, created_at = ?, reviewed_at = NULL, reviewed_by = NULL, review_note = NULL WHERE id = ?",
+    ).bind(action, payloadJson, now, existing.id).run();
+    return { id: existing.id, status: "pending", replaced: true };
+  }
+  const id = randomId("change");
+  await env.DB.prepare(
+    "INSERT INTO family_change_requests (id, username, person_id, action, payload_json, status, created_at) VALUES (?, ?, ?, ?, ?, 'pending', ?)",
+  ).bind(id, session.username, personId, action, payloadJson, now).run();
+  return { id, status: "pending", replaced: false };
+}
+
+function changeRequestJson(row, data) {
+  let payload = {};
+  try { payload = JSON.parse(row.payload_json || "{}"); } catch (error) { payload = {}; }
+  const current = data.people.find((person) => person.id === row.person_id);
+  const proposed = row.action === "create" ? payload.person : { ...current, ...(payload.changes || {}) };
+  return {
+    id: row.id,
+    username: row.username,
+    displayName: row.display_name || row.username,
+    personId: row.person_id,
+    personName: proposed?.fullName || current?.fullName || "Người mới",
+    action: row.action,
+    status: row.status,
+    createdAt: row.created_at,
+    reviewedAt: row.reviewed_at,
+    reviewedBy: row.reviewed_by,
+    reviewNote: row.review_note,
+    changes: payload.changes || null,
+    person: row.action === "create" ? payload.person || null : null,
+  };
+}
+
+async function handleChangeRequestsList(request, env) {
+  const session = await adminSession(request, env);
+  if (!session) return json({ error: "Bạn cần đăng nhập khu cập nhật." }, 401);
+  const data = await readFamily(env);
+  const sql = canManageAccounts(session)
+    ? "SELECT r.*, u.display_name FROM family_change_requests r LEFT JOIN users u ON u.username = r.username ORDER BY CASE r.status WHEN 'pending' THEN 0 ELSE 1 END, r.created_at DESC LIMIT 300"
+    : "SELECT r.*, u.display_name FROM family_change_requests r LEFT JOIN users u ON u.username = r.username WHERE r.username = ? ORDER BY r.created_at DESC LIMIT 100";
+  const statement = env.DB.prepare(sql);
+  const result = canManageAccounts(session) ? await statement.all() : await statement.bind(session.username).all();
+  return json({ requests: (result.results || []).map((row) => changeRequestJson(row, data)) });
+}
+
+async function handleChangeRequestReview(request, env, id, decision) {
+  const session = await adminSession(request, env);
+  if (!canManageAccounts(session)) return json({ error: "Chỉ Admin được duyệt yêu cầu." }, session ? 403 : 401);
+  const row = await env.DB.prepare("SELECT * FROM family_change_requests WHERE id = ?").bind(clean(id)).first();
+  if (!row) return json({ error: "Không tìm thấy yêu cầu." }, 404);
+  if (row.status !== "pending") return json({ error: "Yêu cầu này đã được xử lý trước đó." }, 409);
+  const body = await bodyJson(request);
+  const note = clean(body.reviewNote).slice(0, 500);
+  const now = new Date().toISOString();
+  if (decision === "rejected") {
+    await env.DB.prepare(
+      "UPDATE family_change_requests SET status = 'rejected', reviewed_at = ?, reviewed_by = ?, review_note = ? WHERE id = ? AND status = 'pending'",
+    ).bind(now, session.username, note, row.id).run();
+    return json({ ok: true, status: "rejected" });
+  }
+
+  let payload;
+  try { payload = JSON.parse(row.payload_json || "{}"); } catch (error) { return json({ error: "Nội dung yêu cầu bị hỏng, hãy từ chối và yêu cầu gửi lại." }, 400); }
+  const data = await readFamily(env);
+  if (row.action === "create") {
+    if (data.people.some((person) => person.id === row.person_id)) return json({ error: "Người này đã được thêm trước đó." }, 409);
+    const person = await ensureExternalPersonPhotos(env, normalizePerson(payload.person || {}, row.person_id));
+    if (!person.fullName) return json({ error: "Yêu cầu thiếu họ tên." }, 400);
+    data.people.push(person);
+  } else {
+    const index = data.people.findIndex((person) => person.id === row.person_id);
+    if (index < 0) return json({ error: "Thành viên cần sửa không còn trong gia phả." }, 404);
+    const merged = { ...data.people[index], ...(payload.changes || {}) };
+    data.people[index] = await ensureExternalPersonPhotos(env, normalizePerson(merged, row.person_id));
+  }
+  await writeFamily(env, data);
+  await env.DB.prepare(
+    "UPDATE family_change_requests SET status = 'approved', reviewed_at = ?, reviewed_by = ?, review_note = ? WHERE id = ? AND status = 'pending'",
+  ).bind(now, session.username, note, row.id).run();
+  return json({ ok: true, status: "approved", personId: row.person_id });
 }
 
 async function handlePeopleGet(request, env) {
@@ -651,22 +901,46 @@ async function handlePeopleGet(request, env) {
 }
 
 async function handlePeopleCreate(request, env) {
-  if (!await isAdmin(request, env)) return json({ error: "Bạn cần đăng nhập admin." }, 401);
+  const session = await adminSession(request, env);
+  if (!session) return json({ error: "Bạn cần đăng nhập khu cập nhật." }, 401);
   const person = await ensureExternalPersonPhotos(env, normalizePerson(await bodyJson(request)));
   if (!person.fullName) return json({ error: "Vui lòng nhập họ tên." }, 400);
   const data = await readFamily(env);
+  if (!canEditAll(session)) {
+    if (session.role !== "member" || !session.personId) return json({ error: "Tài khoản chưa được gắn danh tính nên chưa thể gửi thông tin." }, 403);
+    const identity = data.people.find((item) => item.id === session.personId);
+    const allowedParents = new Set([identity?.id, ...cleanArray(identity?.spouseIds)].filter(Boolean));
+    const selectedParents = [person.fatherId, person.motherId].filter(Boolean);
+    if (!selectedParents.length || selectedParents.some((parentId) => !allowedParents.has(parentId))) {
+      return json({ error: "Thành viên chỉ được đề nghị thêm con của mình hoặc của vợ/chồng mình." }, 403);
+    }
+    person.spouseIds = [];
+    const requestResult = await saveChangeRequest(env, session, "create", person.id, { person });
+    return json({ id: person.id, pendingApproval: true, requestId: requestResult.id }, 202);
+  }
   data.people.push(person);
   await writeFamily(env, data);
   return json(person, 201);
 }
 
 async function handlePeopleUpdate(request, env, id) {
-  if (!await isAdmin(request, env)) return json({ error: "Bạn cần đăng nhập admin." }, 401);
+  const session = await adminSession(request, env);
+  if (!session) return json({ error: "Bạn cần đăng nhập khu cập nhật." }, 401);
   const data = await readFamily(env);
   const index = data.people.findIndex((person) => person.id === id);
   if (index < 0) return json({ error: "Không tìm thấy người này." }, 404);
   const updated = await ensureExternalPersonPhotos(env, normalizePerson(await bodyJson(request), id));
   if (!updated.fullName) return json({ error: "Vui lòng nhập họ tên." }, 400);
+  if (!canEditAll(session)) {
+    if (session.role !== "member" || !session.personId) return json({ error: "Tài khoản chưa được gắn danh tính nên chưa thể sửa thông tin." }, 403);
+    if (!memberEditableIds(data, session.personId).has(id)) {
+      return json({ error: "Bạn chỉ được đề nghị sửa hồ sơ của mình, vợ/chồng và các con." }, 403);
+    }
+    const changes = memberChanges(data.people[index], updated);
+    if (!Object.keys(changes).length) return json({ error: "Không có thông tin nào thay đổi." }, 400);
+    const requestResult = await saveChangeRequest(env, session, "update", id, { changes });
+    return json({ id, pendingApproval: true, requestId: requestResult.id }, 202);
+  }
   const selectedSpouses = new Set(updated.spouseIds);
   data.people.forEach((person) => {
     if (!selectedSpouses.has(person.id)) {
@@ -679,7 +953,8 @@ async function handlePeopleUpdate(request, env, id) {
 }
 
 async function handlePeopleDelete(request, env, id) {
-  if (!await isAdmin(request, env)) return json({ error: "Bạn cần đăng nhập admin." }, 401);
+  const session = await adminSession(request, env);
+  if (!canEditAll(session)) return json({ error: "Thành viên không được xóa người khỏi gia phả." }, session ? 403 : 401);
   const data = await readFamily(env);
   const before = data.people.length;
   data.people = data.people.filter((person) => person.id !== id);
@@ -694,7 +969,8 @@ async function handlePeopleDelete(request, env, id) {
 }
 
 async function handleImport(request, env) {
-  if (!await isAdmin(request, env)) return json({ error: "Bạn cần đăng nhập admin." }, 401);
+  const session = await adminSession(request, env);
+  if (!canEditAll(session)) return json({ error: "Bạn không có quyền nhập toàn bộ dữ liệu." }, session ? 403 : 401);
   const payload = await bodyJson(request);
   if (!Array.isArray(payload.people)) return json({ error: "File nhập phải có danh sách people." }, 400);
   const data = {
@@ -707,7 +983,8 @@ async function handleImport(request, env) {
 }
 
 async function handlePhoto(request, env) {
-  if (!await isAdmin(request, env)) return json({ error: "Bạn cần đăng nhập admin." }, 401);
+  const session = await adminSession(request, env);
+  if (!session || (session.role === "member" && !session.personId)) return json({ error: "Tài khoản chưa có quyền tải ảnh." }, session ? 403 : 401);
   const payload = await bodyJson(request);
   const dataUrl = clean(payload.dataUrl);
   return json({ url: await storePhotoDataUrl(env, dataUrl) });
@@ -734,6 +1011,10 @@ export async function onRequest(context) {
     const path = url.pathname.replace(/^\/+/, "").replace(/^api\/?/, "").replace(/\/+$/, "");
     const parts = path.split("/").filter(Boolean);
 
+    if (["POST", "PUT", "DELETE", "PATCH"].includes(method) && !mutationOriginAllowed(request)) {
+      return json({ error: "Yêu cầu không cùng nguồn với trang gia phả." }, 403);
+    }
+
     if (method === "GET" && path === "viewer-session") return handleViewerSession(request, env);
     if (method === "GET" && path === "me") return handleMe(request, env);
     if (method === "GET" && path === "admin/storage") return handleAdminStorage(request, env);
@@ -742,6 +1023,9 @@ export async function onRequest(context) {
     if (method === "POST" && path === "admin/users") return handleAdminUsersCreate(request, env);
     if (method === "PUT" && parts[0] === "admin" && parts[1] === "users" && parts[2]) return handleAdminUsersUpdate(request, env, decodeURIComponent(parts[2]));
     if (method === "DELETE" && parts[0] === "admin" && parts[1] === "users" && parts[2]) return handleAdminUsersDelete(request, env, decodeURIComponent(parts[2]));
+    if (method === "GET" && path === "change-requests") return handleChangeRequestsList(request, env);
+    if (method === "POST" && parts[0] === "change-requests" && parts[1] && parts[2] === "approve") return handleChangeRequestReview(request, env, decodeURIComponent(parts[1]), "approved");
+    if (method === "POST" && parts[0] === "change-requests" && parts[1] && parts[2] === "reject") return handleChangeRequestReview(request, env, decodeURIComponent(parts[1]), "rejected");
     if (method === "POST" && path === "login") return handleAdminLogin(request, env);
     if (method === "POST" && path === "logout") {
       return new Response(null, { status: 204, headers: { "Set-Cookie": clearCookie(ADMIN_COOKIE) } });

@@ -16,6 +16,7 @@ const state = {
   viewerAccounts: [],
   currentAdmin: null,
   storageStats: null,
+  changeRequests: [],
   menuOpen: false,
   editingId: "",
   adminQuery: "",
@@ -57,6 +58,11 @@ const emptyPerson = {
   spouseIds: [],
   photo: "",
   galleryPhotos: [],
+  graveLocation: "",
+  graveAddress: "",
+  graveMapUrl: "",
+  graveNotes: "",
+  gravePhoto: "",
   notes: "",
 };
 
@@ -168,7 +174,15 @@ async function loadViewerAccounts() {
     state.currentAdmin = result.currentUser || null;
   } catch (error) {
     state.viewerAccounts = [];
-    state.currentAdmin = null;
+  }
+}
+
+async function loadChangeRequests() {
+  try {
+    const result = await api("/api/change-requests");
+    state.changeRequests = result.requests || [];
+  } catch (error) {
+    state.changeRequests = [];
   }
 }
 
@@ -184,6 +198,31 @@ function personById(id) {
   if (!id) return undefined;
   if (state.personIndex.size !== (state.data.people || []).length) rebuildPersonIndex();
   return state.personIndex.get(id);
+}
+
+function roleLabel(role, isRoot = false) {
+  if (isRoot) return "Admin gốc";
+  return ({ admin: "Admin", clan_head: "Trưởng họ", member: "Thành viên", viewer: "Người xem" })[role] || "Người xem";
+}
+
+function adminCanManageAccounts() {
+  return !!state.currentAdmin && (state.currentAdmin.isRoot || state.currentAdmin.role === "admin");
+}
+
+function adminCanEditAll() {
+  return !!state.currentAdmin && (adminCanManageAccounts() || state.currentAdmin.role === "clan_head");
+}
+
+function editablePersonIdsForCurrentUser() {
+  if (adminCanEditAll()) return new Set(state.data.people.map((person) => person.id));
+  const identity = personById(state.currentAdmin?.personId);
+  if (!identity) return new Set();
+  const spouseIds = identity.spouseIds || [];
+  const result = new Set([identity.id, ...spouseIds]);
+  state.data.people.forEach((person) => {
+    if ([identity.id, ...spouseIds].includes(person.fatherId) || [identity.id, ...spouseIds].includes(person.motherId)) result.add(person.id);
+  });
+  return result;
 }
 
 function normalizeText(value) {
@@ -297,6 +336,7 @@ function icon(name) {
     users: '<circle cx="8" cy="8" r="3"></circle><circle cx="16" cy="8" r="3"></circle><path d="M3 19v-1a5 5 0 0 1 5-5"></path><path d="M21 19v-1a5 5 0 0 0-5-5"></path><path d="M11 14h2"></path>',
     download: '<path d="M12 3v12"></path><path d="m7 10 5 5 5-5"></path><path d="M5 21h14"></path>',
     award: '<circle cx="12" cy="8" r="6"></circle><path d="M15.5 13 17 22l-5-3-5 3 1.5-9"></path><path d="m9.5 8 1.6 1.6L14.8 6"></path>',
+    mapPin: '<path d="M20 10c0 5-8 11-8 11S4 15 4 10a8 8 0 1 1 16 0Z"></path><circle cx="12" cy="10" r="2.5"></circle>',
   };
   return `<svg class="icon" viewBox="0 0 24 24" aria-hidden="true">${icons[name] || ""}</svg>`;
 }
@@ -1151,13 +1191,14 @@ function renderKinshipFloatButton() {
 
 function topbar(admin) {
   const viewerName = state.viewerUser?.displayName || state.viewerUser?.username || "";
+  const adminName = state.currentAdmin?.displayName || state.currentAdmin?.username || "";
   return `
     <header class="topbar">
       <a class="brand" href="${state.staticMode ? "./" : "/"}">
         <div class="brand-mark">NH</div>
         <div>
           <h1>${esc(state.data.familyName || "Gia phả dòng họ Nguyễn Hữu")}</h1>
-          <p>${admin ? "Khu vực quản trị thông tin gia phả" : viewerName ? `Xin chào ${esc(viewerName)}` : "Đăng nhập để xem gia phả"}</p>
+          <p>${admin ? (adminName ? `${esc(adminName)} · ${roleLabel(state.currentAdmin?.role, state.currentAdmin?.isRoot)}` : "Khu vực cập nhật thông tin gia phả") : viewerName ? `Xin chào ${esc(viewerName)}` : "Đăng nhập để xem gia phả"}</p>
         </div>
       </a>
       <nav class="nav-actions">
@@ -1210,6 +1251,23 @@ function kinshipOptions(selectedId) {
   `).join("")}`;
 }
 
+function searchableSelect(selectHtml, placeholder = "Tìm tên...") {
+  return `<div class="searchable-person-select"><label class="select-search">${icon("search")}<input type="search" class="person-select-filter" placeholder="${esc(placeholder)}" autocomplete="off"></label>${selectHtml}</div>`;
+}
+
+function bindSearchableSelects() {
+  $$(".person-select-filter").forEach((input) => {
+    input.addEventListener("input", () => {
+      const select = input.closest(".searchable-person-select")?.querySelector("select");
+      if (!select) return;
+      const query = normalizeText(input.value).trim();
+      Array.from(select.options).forEach((option, index) => {
+        option.hidden = index > 0 && option.value !== select.value && !!query && !normalizeText(option.textContent).includes(query);
+      });
+    });
+  });
+}
+
 function renderKinshipLookup() {
   const personA = personById(state.kinshipPersonAId);
   const personB = personById(state.kinshipPersonBId);
@@ -1226,8 +1284,8 @@ function renderKinshipLookup() {
           <button class="ghost-btn" id="closeKinshipBtn" type="button">Đóng</button>
         </div>
         <div class="kinship-fields">
-          <div class="field"><label>Người thứ nhất</label><select id="kinshipPersonA">${kinshipOptions(state.kinshipPersonAId)}</select></div>
-          <div class="field"><label>Người thứ hai</label><select id="kinshipPersonB">${kinshipOptions(state.kinshipPersonBId)}</select></div>
+          <div class="field"><label>Người thứ nhất</label>${searchableSelect(`<select id="kinshipPersonA">${kinshipOptions(state.kinshipPersonAId)}</select>`)}</div>
+          <div class="field"><label>Người thứ hai</label>${searchableSelect(`<select id="kinshipPersonB">${kinshipOptions(state.kinshipPersonBId)}</select>`)}</div>
         </div>
         <div class="kinship-result">
           ${result}
@@ -2029,6 +2087,10 @@ function renderDetail(id) {
   const isDaughterInLaw = person.familyRole === "Con dâu";
   const isDaughter = person.familyRole === "Con gái";
   const galleryPhotos = cleanGallery(person.galleryPhotos);
+  const viewerIdentity = personById(state.viewerUser?.personId);
+  const personalSpeech = viewerIdentity && viewerIdentity.id !== person.id ? kinshipSpeech(viewerIdentity, person) : null;
+  const hasGraveInfo = status.label === "Đã mất" && [person.graveLocation, person.graveAddress, person.graveMapUrl, person.graveNotes, person.gravePhoto].some(Boolean);
+  const graveMapUrl = /^https?:\/\//i.test(String(person.graveMapUrl || "").trim()) ? String(person.graveMapUrl).trim() : "";
   return `
     <aside class="detail-drawer">
       <div class="drawer-head">
@@ -2045,6 +2107,8 @@ function renderDetail(id) {
             <div class="chips">
               <span class="chip icon-chip">${genderIconHtml(person)}${esc(person.gender || "Khác")}</span>
               <span class="chip icon-chip ${status.className}">${icon(status.icon)}${esc(status.label)}</span>
+              ${viewerIdentity ? `<span class="chip personal-call-chip">${viewerIdentity.id === person.id ? "Hồ sơ của bạn" : `Bạn gọi: ${esc(personalSpeech.call)}`}</span>` : ""}
+              ${status.label === "Đã mất" && (person.graveLocation || person.graveAddress) ? `<span class="chip grave-location-chip">Phần mộ: ${esc(person.graveLocation || person.graveAddress)}</span>` : ""}
               ${order ? `<span class="chip icon-chip">${icon("order")}${esc(order)}</span>` : ""}
               ${person.birthDate ? `<span class="chip">Sinh ${esc(formatDate(person.birthDate))}</span>` : ""}
               ${person.deathDate ? `<span class="chip">Mất ${esc(formatDate(person.deathDate))}</span>` : ""}
@@ -2083,6 +2147,18 @@ function renderDetail(id) {
           <dt>Thành tích</dt><dd>${(person.achievements || []).length ? `<div class="chips">${person.achievements.map((item) => `<span class="chip">${esc(item)}</span>`).join("")}</div>` : "Chưa cập nhật"}</dd>
           <dt>Ghi chú</dt><dd>${esc(person.notes || "Không có")}</dd>
         </dl>
+        ${hasGraveInfo ? `
+          <section class="grave-section">
+            <h3>${icon("mapPin")} Thông tin phần mộ</h3>
+            ${person.gravePhoto ? `<button class="grave-photo gallery-photo" data-photo-url="${esc(assetUrl(person.gravePhoto))}" data-photo-title="${esc(`Phần mộ ${person.fullName}`)}" type="button"><img src="${esc(assetUrl(person.gravePhoto))}" alt="${esc(`Phần mộ ${person.fullName}`)}" loading="lazy"></button>` : ""}
+            <dl class="info-grid">
+              ${person.graveLocation ? `<dt>Khu/mộ phần</dt><dd>${esc(person.graveLocation)}</dd>` : ""}
+              ${person.graveAddress ? `<dt>Địa chỉ</dt><dd>${esc(person.graveAddress)}</dd>` : ""}
+              ${graveMapUrl ? `<dt>Bản đồ</dt><dd><a class="text-link" href="${esc(graveMapUrl)}" target="_blank" rel="noopener noreferrer">Mở vị trí phần mộ</a></dd>` : ""}
+              ${person.graveNotes ? `<dt>Ghi chú</dt><dd>${esc(person.graveNotes)}</dd>` : ""}
+            </dl>
+          </section>
+        ` : ""}
         ${galleryPhotos.length ? `
           <section class="gallery-section">
             <h3>Ảnh khác</h3>
@@ -2130,6 +2206,7 @@ function cleanGallery(value) {
 }
 
 function bindPublic() {
+  bindSearchableSelects();
   const openKinshipLookup = () => {
     const people = sortedPeopleByRank();
     state.kinshipPersonAId = state.kinshipPersonAId || people[0]?.id || "";
@@ -2468,13 +2545,14 @@ function handleTouchMove(event) {
 async function renderAdmin() {
   const me = await api("/api/me").catch(() => ({ authenticated: false }));
   state.authenticated = me.authenticated;
+  state.currentAdmin = me.user || null;
   if (!state.authenticated) {
     app.innerHTML = `
       <div class="app-shell">
         ${topbar(true)}
         <main class="login-screen">
           <form class="login-panel" id="loginForm">
-            <h2>Đăng nhập admin</h2>
+            <h2>Đăng nhập khu cập nhật</h2>
             <div class="field"><label>Tài khoản</label><input name="username" autocomplete="username" required></div>
             <div class="field"><label>Mật khẩu</label><input name="password" type="password" autocomplete="current-password" required></div>
             <div class="form-actions"><button class="btn" type="submit">Đăng nhập</button></div>
@@ -2487,7 +2565,13 @@ async function renderAdmin() {
     return;
   }
   await loadData();
-  await Promise.all([loadViewerAccounts(), loadStorageStats()]);
+  const editableIds = editablePersonIdsForCurrentUser();
+  if (!adminCanEditAll() && !editableIds.has(state.editingId)) state.editingId = [...editableIds][0] || "";
+  await Promise.all([
+    adminCanManageAccounts() ? loadViewerAccounts() : Promise.resolve(),
+    adminCanEditAll() ? loadStorageStats() : Promise.resolve(),
+    loadChangeRequests(),
+  ]);
   renderAdminPanel();
 }
 
@@ -2511,6 +2595,9 @@ function adminSearchText(person) {
     person.daughterHusbandName,
     person.daughterMarriedAddress,
     person.daughterChildrenCount,
+    person.graveLocation,
+    person.graveAddress,
+    person.graveNotes,
     person.notes,
     ...(person.achievements || []),
   ].join(" ");
@@ -2539,15 +2626,109 @@ function adminSearchScore(person, query) {
   return 0;
 }
 
+function accountIdentitySelect(selectedId = "", disabled = false) {
+  const options = state.data.people
+    .slice()
+    .sort((a, b) => a.fullName.localeCompare(b.fullName, "vi"))
+    .map((person) => `<option value="${esc(person.id)}" ${person.id === selectedId ? "selected" : ""}>${esc(person.fullName)}${person.birthDate ? ` · ${esc(formatDate(person.birthDate))}` : ""}</option>`)
+    .join("");
+  return searchableSelect(`<select name="personId" ${disabled ? "disabled" : ""} aria-label="Danh tính trong gia phả"><option value="">Chưa gắn danh tính</option>${options}</select>`, "Tìm danh tính...");
+}
+
+function accountRoleOptions(selected) {
+  return [
+    ["viewer", "Người xem"],
+    ["member", "Thành viên"],
+    ["clan_head", "Trưởng họ"],
+    ["admin", "Admin"],
+  ].map(([value, label]) => `<option value="${value}" ${selected === value ? "selected" : ""}>${label}</option>`).join("");
+}
+
+function renderAccountManagement() {
+  if (!adminCanManageAccounts()) return "";
+  return `
+    <div class="viewer-account-box">
+      <h3>Tài khoản và phân quyền</h3>
+      <p class="notice">Gắn đúng danh tính để web tự tính cách xưng hô và giới hạn quyền sửa.</p>
+      <form id="viewerAccountForm" class="viewer-account-form">
+        <input name="displayName" placeholder="Tên hiển thị">
+        <input name="username" placeholder="Tài khoản" autocomplete="off" required>
+        <input name="password" type="password" placeholder="Mật khẩu" autocomplete="new-password" required>
+        <select name="role" aria-label="Loại tài khoản">${accountRoleOptions("viewer")}</select>
+        ${accountIdentitySelect()}
+        <button class="btn" type="submit">Tạo tài khoản</button>
+      </form>
+      <div class="viewer-account-list">
+        ${state.viewerAccounts.length ? state.viewerAccounts.map((user) => {
+          const rootIdentityEditable = user.isRoot && state.currentAdmin?.isRoot;
+          const locked = user.locked;
+          return `
+            <form class="viewer-account-row account-edit-form" data-username="${esc(user.username)}">
+              <span class="account-main"><strong>${esc(user.displayName || user.username)}</strong><small>${esc(user.username)} · ${roleLabel(user.role, user.isRoot)}${user.personId ? ` · ${esc(personById(user.personId)?.fullName || "Danh tính không còn tồn tại")}` : " · chưa gắn danh tính"}</small></span>
+              <input name="displayName" value="${esc(user.displayName || "")}" ${locked ? "disabled" : ""} placeholder="Tên hiển thị">
+              <select name="role" ${locked ? "disabled" : ""} aria-label="Loại tài khoản">${accountRoleOptions(user.role)}</select>
+              ${accountIdentitySelect(user.personId, locked && !rootIdentityEditable)}
+              <input name="password" type="password" ${locked ? "disabled" : ""} placeholder="Mật khẩu mới">
+              <div class="account-actions">
+                ${locked && !rootIdentityEditable ? `<span class="account-lock">Không thể sửa/xóa</span>` : `<button class="text-btn update-account" type="submit">${locked ? "Lưu danh tính" : "Lưu"}</button>`}
+                ${locked ? "" : `<button class="text-btn delete-viewer-user" data-username="${esc(user.username)}" type="button">Xóa</button>`}
+              </div>
+            </form>`;
+        }).join("") : `<p class="notice">Chưa có tài khoản nào.</p>`}
+      </div>
+    </div>`;
+}
+
+function changeStatusLabel(status) {
+  return ({ pending: "Chờ duyệt", approved: "Đã duyệt", rejected: "Đã từ chối" })[status] || status;
+}
+
+function changeFieldLabel(field) {
+  return ({
+    fullName: "Họ tên", gender: "Giới tính", birthDate: "Ngày sinh", deathDate: "Ngày mất",
+    marriageYear: "Năm lập gia đình", familyRole: "Vai trò", hometown: "Quê quán",
+    currentResidence: "Nơi ở", address: "Địa chỉ", job: "Nghề nghiệp", educationLevel: "Trình độ",
+    academicDegree: "Học vị", academicRank: "Học hàm", achievements: "Thành tích", photo: "Ảnh cá nhân",
+    galleryPhotos: "Ảnh khác", graveLocation: "Khu/mộ phần", graveAddress: "Địa chỉ phần mộ",
+    graveMapUrl: "Bản đồ phần mộ", graveNotes: "Ghi chú phần mộ", gravePhoto: "Ảnh phần mộ", notes: "Ghi chú",
+  })[field] || field;
+}
+
+function changeValueText(value) {
+  if (Array.isArray(value)) return value.join("; ") || "Để trống";
+  const text = String(value ?? "").trim();
+  if (!text) return "Để trống";
+  if (/^\/api\/photos\//.test(text) || /^https?:\/\//i.test(text)) return "Đã cập nhật đường dẫn/ảnh";
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
+}
+
+function renderChangeRequests() {
+  const requests = state.changeRequests || [];
+  const pendingCount = requests.filter((item) => item.status === "pending").length;
+  return `
+    <section class="change-requests-box">
+      <div class="change-requests-head"><h3>${adminCanManageAccounts() ? "Yêu cầu chờ duyệt" : "Lịch sử đề nghị cập nhật"}</h3><span>${pendingCount} đang chờ</span></div>
+      ${requests.length ? `<div class="change-request-list">${requests.map((item) => `
+        <article class="change-request ${esc(item.status)}">
+          <div><strong>${esc(item.personName)}</strong><span>${esc(item.displayName)} · ${item.action === "create" ? "Thêm người" : "Sửa thông tin"} · ${changeStatusLabel(item.status)}</span></div>
+          ${item.changes ? `<dl class="change-preview">${Object.entries(item.changes).map(([field, value]) => `<dt>${esc(changeFieldLabel(field))}</dt><dd>${esc(changeValueText(value))}</dd>`).join("")}</dl>` : item.person ? `<p>Người mới: ${esc(item.person.fullName || "Chưa có tên")} · ${esc(item.person.birthDate || "chưa có ngày sinh")}</p>` : ""}
+          ${item.reviewNote ? `<p>${esc(item.reviewNote)}</p>` : ""}
+          ${adminCanManageAccounts() && item.status === "pending" ? `<div class="request-actions"><button class="btn approve-request" data-request-id="${esc(item.id)}" type="button">Duyệt</button><button class="ghost-btn reject-request" data-request-id="${esc(item.id)}" type="button">Từ chối</button></div>` : ""}
+        </article>`).join("")}</div>` : `<p class="notice">Chưa có yêu cầu cập nhật.</p>`}
+    </section>`;
+}
+
 function renderAdminPanel() {
   const adminQuery = state.adminQuery.trim();
-  const scoredPeople = state.data.people
+  const editableIds = editablePersonIdsForCurrentUser();
+  const availablePeople = adminCanEditAll() ? state.data.people : state.data.people.filter((person) => editableIds.has(person.id));
+  const scoredPeople = availablePeople
     .map((person) => ({ person, score: adminSearchScore(person, adminQuery) }))
     .filter((item) => !adminQuery || item.score > 0)
     .sort((a, b) => (adminQuery ? b.score - a.score : 0) || a.person.fullName.localeCompare(b.person.fullName, "vi"));
   const people = scoredPeople.map((item) => item.person);
   const suggestions = adminQuery ? scoredPeople.slice(0, 7).map((item) => item.person) : [];
-  const editing = personById(state.editingId) || { ...emptyPerson };
+  const editing = (editableIds.has(state.editingId) ? personById(state.editingId) : null) || { ...emptyPerson };
   app.innerHTML = `
     <div class="app-shell">
       ${topbar(true)}
@@ -2555,7 +2736,7 @@ function renderAdminPanel() {
         <section class="admin-layout">
           <aside class="admin-panel admin-sidebar">
             <div class="panel-head">
-              <h2>Danh sách ${state.data.people.length} người</h2>
+              <h2>${adminCanEditAll() ? `Danh sách ${state.data.people.length} người` : `Gia đình được phép cập nhật · ${availablePeople.length} người`}</h2>
               <label class="searchbar"><span class="search-icon" title="Tìm kiếm">${icon("search")}</span><input id="adminSearch" value="${esc(state.adminQuery)}" placeholder="Tìm người để sửa" autocomplete="off"></label>
               ${suggestions.length ? `
                 <div class="admin-suggestions" aria-label="Gợi ý tìm kiếm">
@@ -2568,12 +2749,14 @@ function renderAdminPanel() {
                 </div>
               ` : adminQuery ? `<p class="notice admin-search-empty">Không thấy tên phù hợp. Hãy thử gỡ dấu hoặc nhập ít chữ hơn.</p>` : ""}
               <div class="import-actions">
-                <button class="btn" id="newPersonBtn">Thêm người</button>
-                <button class="ghost-btn" id="exportBtn">Xuất JSON</button>
-                <label class="ghost-btn">Nhập JSON<input id="importJson" type="file" accept=".json,application/json" hidden></label>
-                <label class="ghost-btn">Nhập CSV<input id="importCsv" type="file" accept=".csv,text/csv" hidden></label>
+                ${state.currentAdmin?.personId || adminCanEditAll() ? `<button class="btn" id="newPersonBtn">Thêm người</button>` : ""}
+                ${adminCanEditAll() ? `
+                  <button class="ghost-btn" id="exportBtn">Xuất JSON</button>
+                  <label class="ghost-btn">Nhập JSON<input id="importJson" type="file" accept=".json,application/json" hidden></label>
+                  <label class="ghost-btn">Nhập CSV<input id="importCsv" type="file" accept=".csv,text/csv" hidden></label>
+                ` : ""}
               </div>
-              ${storageSummary()}
+              ${adminCanEditAll() ? storageSummary() : `<p class="permission-note">${state.currentAdmin?.personId ? "Thông tin bạn gửi sẽ được Admin duyệt trước khi hiển thị." : "Tài khoản chưa được gắn danh tính. Hãy liên hệ Admin để cấp quyền cập nhật."}</p>`}
             </div>
             <div class="person-list">
               ${people.length ? people.map((person) => `
@@ -2583,50 +2766,17 @@ function renderAdminPanel() {
                 </button>
               `).join("") : `<p class="notice empty-admin-search">Không có kết quả phù hợp.</p>`}
             </div>
-            <div class="viewer-account-box">
-              <h3>Tài khoản truy cập</h3>
-              <form id="viewerAccountForm" class="viewer-account-form">
-                <input name="displayName" placeholder="Tên hiển thị">
-                <input name="username" placeholder="Tài khoản" autocomplete="off" required>
-                <input name="password" type="password" placeholder="Mật khẩu" autocomplete="new-password" required>
-                <select name="role" aria-label="Loại tài khoản">
-                  <option value="viewer">Người xem</option>
-                  <option value="admin">Admin phụ</option>
-                </select>
-                <button class="btn" type="submit">Tạo tài khoản</button>
-              </form>
-              <div class="viewer-account-list">
-                ${state.viewerAccounts.length ? state.viewerAccounts.map((user) => `
-                  <form class="viewer-account-row account-edit-form" data-username="${esc(user.username)}">
-                    <span class="account-main">
-                      <strong>${esc(user.displayName || user.username)}</strong>
-                      <small>${esc(user.username)} · ${user.role === "admin" ? "Admin" : "Người xem"}${user.locked ? " · khóa gốc" : ""}</small>
-                    </span>
-                    <input name="displayName" value="${esc(user.displayName || "")}" ${user.locked ? "disabled" : ""} placeholder="Tên hiển thị">
-                    <select name="role" ${user.locked ? "disabled" : ""} aria-label="Loại tài khoản">
-                      <option value="viewer" ${user.role === "viewer" ? "selected" : ""}>Người xem</option>
-                      <option value="admin" ${user.role === "admin" ? "selected" : ""}>Admin phụ</option>
-                    </select>
-                    <input name="password" type="password" ${user.locked ? "disabled" : ""} placeholder="Mật khẩu mới">
-                    <div class="account-actions">
-                      ${user.locked ? `<span class="account-lock">Không thể sửa/xóa</span>` : `
-                        <button class="text-btn update-account" type="submit">Lưu</button>
-                        <button class="text-btn delete-viewer-user" data-username="${esc(user.username)}" type="button">Xóa</button>
-                      `}
-                    </div>
-                  </form>
-                `).join("") : `<p class="notice">Chưa có tài khoản nào.</p>`}
-              </div>
-            </div>
+            ${renderAccountManagement()}
+            ${renderChangeRequests()}
           </aside>
           <section class="admin-panel">
             <form class="form-wrap" id="personForm">
               <h2>${editing.id ? "Sửa thông tin" : "Thêm người mới"}</h2>
-              <p class="notice">Chọn bố, mẹ và vợ/chồng bằng danh sách bên dưới. Quan hệ vợ/chồng sẽ tự đồng bộ hai chiều.</p>
+              <p class="notice">${adminCanEditAll() ? "Chọn bố, mẹ và vợ/chồng bằng danh sách bên dưới. Quan hệ vợ/chồng sẽ tự đồng bộ hai chiều." : "Bạn chỉ được cập nhật hồ sơ của mình, vợ/chồng và các con. Thay đổi chỉ công khai sau khi Admin duyệt."}</p>
               ${personForm(editing)}
               <div class="form-actions">
-                <button class="btn" type="submit">Lưu thông tin</button>
-                ${editing.id ? `<button class="danger-btn" type="button" id="deleteBtn">Xóa người này</button>` : ""}
+                <button class="btn" type="submit">${adminCanEditAll() ? "Lưu thông tin" : "Gửi Admin duyệt"}</button>
+                ${editing.id && adminCanEditAll() ? `<button class="danger-btn" type="button" id="deleteBtn">Xóa người này</button>` : ""}
               </div>
             </form>
           </section>
@@ -2687,6 +2837,10 @@ function personForm(person) {
   const husband = spouseForInLaw(person);
   const spouseId = (person.spouseIds || [])[0] || "";
   const galleryPhotos = cleanGallery(person.galleryPhotos);
+  const relationshipDisabled = !adminCanEditAll() && !!person.id;
+  const identity = personById(state.currentAdmin?.personId);
+  const memberParentIds = new Set([identity?.id, ...(identity?.spouseIds || [])].filter(Boolean));
+  const parentPredicate = adminCanEditAll() || person.id ? (() => true) : ((item) => memberParentIds.has(item.id));
   return `
     <div class="form-grid">
       <div class="field full"><label>Họ và tên</label><input name="fullName" value="${esc(person.fullName)}" required></div>
@@ -2711,14 +2865,20 @@ function personForm(person) {
       <div class="field"><label>Trình độ học vấn</label><select name="educationLevel">${selectOptions(EDUCATION_LEVELS, person.educationLevel)}</select></div>
       <div class="field"><label>Học vị cao nhất</label><select name="academicDegree">${selectOptions(ACADEMIC_DEGREES, academicDegreeFor(person))}</select></div>
       <div class="field"><label>Học hàm nếu có</label><select name="academicRank">${selectOptions(ACADEMIC_RANKS, academicRankFor(person))}</select></div>
-      <div class="field ${isDaughterInLaw ? "role-hidden" : ""}" data-role-group="birth-parent"><label>Bố đẻ</label>${selectPerson("fatherId", person.fatherId, person.id, false)}</div>
-      <div class="field ${isDaughterInLaw ? "role-hidden" : ""}" data-role-group="birth-parent"><label>Mẹ đẻ</label>${selectPerson("motherId", person.motherId, person.id, false)}</div>
-      <div class="field full ${isDaughterInLaw ? "" : "role-hidden"}" data-role-group="inlaw"><label>Chồng trong dòng họ</label>${selectPerson("husbandId", husband?.id || "", person.id, false, (item) => item.familyRole !== "Con dâu")}</div>
+      <div class="field ${isDaughterInLaw ? "role-hidden" : ""}" data-role-group="birth-parent"><label>Bố đẻ</label>${selectPerson("fatherId", person.fatherId, person.id, false, parentPredicate, relationshipDisabled)}</div>
+      <div class="field ${isDaughterInLaw ? "role-hidden" : ""}" data-role-group="birth-parent"><label>Mẹ đẻ</label>${selectPerson("motherId", person.motherId, person.id, false, parentPredicate, relationshipDisabled)}</div>
+      <div class="field full ${isDaughterInLaw ? "" : "role-hidden"}" data-role-group="inlaw"><label>Chồng trong dòng họ</label>${selectPerson("husbandId", husband?.id || "", person.id, false, (item) => item.familyRole !== "Con dâu", !adminCanEditAll())}</div>
       <div class="field full ${isDaughterInLaw ? "" : "role-hidden"}" data-role-group="inlaw"><label>Bố mẹ chồng tự hiện theo chồng</label><div class="readonly-box" id="inLawPreview">${renderInLawPreview(husband?.id || "")}</div></div>
-      <div class="field full ${isDaughterInLaw || isDaughter ? "role-hidden" : ""}" data-role-group="spouse"><label>Vợ/chồng cùng hàng</label>${selectPerson("spouseId", spouseId, person.id, false)}</div>
+      <div class="field full ${isDaughterInLaw || isDaughter ? "role-hidden" : ""}" data-role-group="spouse"><label>Vợ/chồng cùng hàng</label>${selectPerson("spouseId", spouseId, person.id, false, () => true, !adminCanEditAll())}</div>
       <div class="field full"><label>Ảnh cá nhân</label><input name="photoFile" type="file" accept="image/*"><input name="photo" value="${esc(person.photo)}" placeholder="/uploads/photos/... hoặc link ảnh"></div>
       <div class="field full"><label>Ảnh khác, có thể chọn nhiều file</label><input name="galleryFiles" type="file" accept="image/*" multiple><textarea name="galleryPhotos" placeholder="Hoặc dán link ảnh, mỗi dòng một ảnh">${esc(galleryPhotos.join("\n"))}</textarea></div>
       <div class="field full"><label>Thành tích từ cấp huyện trở lên, mỗi dòng một thành tích</label><textarea name="achievements">${esc((person.achievements || []).join("\n"))}</textarea></div>
+      <div class="field full form-subhead"><h3>Thông tin phần mộ</h3><p>Chỉ nhập khi có thông tin chính xác; có thể để trống.</p></div>
+      <div class="field"><label>Khu/mộ phần</label><input name="graveLocation" value="${esc(person.graveLocation || "")}" placeholder="Ví dụ: Khu A, hàng 3, mộ số 12"></div>
+      <div class="field"><label>Địa chỉ phần mộ</label><input name="graveAddress" value="${esc(person.graveAddress || "")}" placeholder="Thôn/xã/huyện/tỉnh"></div>
+      <div class="field full"><label>Link vị trí bản đồ</label><input name="graveMapUrl" value="${esc(person.graveMapUrl || "")}" placeholder="https://maps.google.com/..."></div>
+      <div class="field full"><label>Ảnh phần mộ</label><input name="gravePhotoFile" type="file" accept="image/*"><input name="gravePhoto" value="${esc(person.gravePhoto || "")}" placeholder="Link ảnh phần mộ"></div>
+      <div class="field full"><label>Ghi chú phần mộ</label><textarea name="graveNotes" placeholder="Chỉ dẫn đường đi, ngày tu sửa hoặc thông tin cần lưu ý">${esc(person.graveNotes || "")}</textarea></div>
       <div class="field full"><label>Ghi chú</label><textarea name="notes">${esc(person.notes)}</textarea></div>
     </div>
   `;
@@ -2736,22 +2896,23 @@ function renderInLawPreview(husbandId) {
   `;
 }
 
-function selectPerson(name, selected, excludeId, multiple, predicate = () => true) {
+function selectPerson(name, selected, excludeId, multiple, predicate = () => true, disabled = false) {
   const selectedSet = new Set(Array.isArray(selected) ? selected : [selected]);
   const options = state.data.people
     .filter((person) => person.id !== excludeId && predicate(person))
     .sort((a, b) => a.fullName.localeCompare(b.fullName, "vi"))
     .map((person) => `<option value="${esc(person.id)}" ${selectedSet.has(person.id) ? "selected" : ""}>${esc(person.fullName)}</option>`)
     .join("");
-  return `<select name="${name}" ${multiple ? "multiple" : ""}><option value="">Chưa chọn</option>${options}</select>`;
+  return searchableSelect(`<select name="${name}" ${multiple ? "multiple" : ""} ${disabled ? "disabled" : ""}><option value="">Chưa chọn</option>${options}</select>`);
 }
 
 function bindAdmin() {
+  bindSearchableSelects();
   $("#logoutBtn")?.addEventListener("click", async () => {
     await api("/api/logout", { method: "POST", body: "{}" });
     location.reload();
   });
-  $("#adminSearch").addEventListener("input", (event) => {
+  $("#adminSearch")?.addEventListener("input", (event) => {
     state.adminQuery = event.target.value;
     renderAdminPanel();
     const input = $("#adminSearch");
@@ -2760,7 +2921,7 @@ function bindAdmin() {
       input.setSelectionRange(input.value.length, input.value.length);
     }
   });
-  $("#adminSearch").addEventListener("keydown", (event) => {
+  $("#adminSearch")?.addEventListener("keydown", (event) => {
     if (event.key !== "Enter") return;
     const firstSuggestion = $(".admin-suggestion");
     if (!firstSuggestion) return;
@@ -2776,7 +2937,7 @@ function bindAdmin() {
       renderAdminPanel();
     });
   });
-  $("#newPersonBtn").addEventListener("click", () => {
+  $("#newPersonBtn")?.addEventListener("click", () => {
     state.editingId = "";
     renderAdminPanel();
   });
@@ -2786,7 +2947,7 @@ function bindAdmin() {
       renderAdminPanel();
     });
   });
-  $("#personForm").addEventListener("submit", savePerson);
+  $("#personForm")?.addEventListener("submit", savePerson);
   $("#viewerAccountForm")?.addEventListener("submit", createViewerAccount);
   $$(".account-edit-form").forEach((form) => {
     form.addEventListener("submit", updateAccessAccount);
@@ -2794,15 +2955,34 @@ function bindAdmin() {
   $$(".delete-viewer-user").forEach((button) => {
     button.addEventListener("click", () => deleteViewerAccount(button.dataset.username));
   });
+  $$(".approve-request").forEach((button) => button.addEventListener("click", () => reviewChangeRequest(button.dataset.requestId, "approve")));
+  $$(".reject-request").forEach((button) => button.addEventListener("click", () => reviewChangeRequest(button.dataset.requestId, "reject")));
   $("#personForm select[name=\"familyRole\"]")?.addEventListener("change", updateRoleFields);
   $("#personForm select[name=\"educationLevel\"]")?.addEventListener("change", updateEducationFields);
   $("#personForm select[name=\"husbandId\"]")?.addEventListener("change", updateInLawPreview);
   $("#deleteBtn")?.addEventListener("click", deletePerson);
-  $("#exportBtn").addEventListener("click", exportJson);
-  $("#importJson").addEventListener("change", importJson);
-  $("#importCsv").addEventListener("change", importCsv);
+  $("#exportBtn")?.addEventListener("click", exportJson);
+  $("#importJson")?.addEventListener("change", importJson);
+  $("#importCsv")?.addEventListener("change", importCsv);
   updateRoleFields();
   updateEducationFields();
+}
+
+async function reviewChangeRequest(id, decision) {
+  if (!id) return;
+  const reviewNote = decision === "reject" ? prompt("Lý do từ chối để thành viên biết và sửa lại:", "") : "";
+  if (decision === "reject" && reviewNote === null) return;
+  try {
+    await api(`/api/change-requests/${encodeURIComponent(id)}/${decision}`, {
+      method: "POST",
+      body: JSON.stringify({ reviewNote }),
+    });
+    await Promise.all([loadData(), loadChangeRequests(), adminCanEditAll() ? loadStorageStats() : Promise.resolve()]);
+    renderAdminPanel();
+    toast(decision === "approve" ? "Đã duyệt và công khai thông tin." : "Đã từ chối yêu cầu.");
+  } catch (error) {
+    toast(error.message);
+  }
 }
 
 async function createViewerAccount(event) {
@@ -2817,6 +2997,7 @@ async function createViewerAccount(event) {
         username: formData.get("username"),
         password: formData.get("password"),
         role: formData.get("role"),
+        personId: formData.get("personId"),
       }),
     });
     form.reset();
@@ -2839,6 +3020,7 @@ async function updateAccessAccount(event) {
       body: JSON.stringify({
         displayName: formData.get("displayName"),
         role: formData.get("role"),
+        personId: formData.get("personId"),
         password: formData.get("password"),
       }),
     });
@@ -2928,12 +3110,19 @@ async function savePerson(event) {
   const formData = new FormData(form);
   let photo = String(formData.get("photo") || "").trim();
   const file = formData.get("photoFile");
+  let gravePhoto = String(formData.get("gravePhoto") || "").trim();
+  const gravePhotoFile = formData.get("gravePhotoFile");
   const galleryFiles = Array.from(formData.getAll("galleryFiles")).filter((item) => item && item.size);
   try {
     if (file && file.size) {
       photo = await uploadPhoto(file);
     } else {
       photo = await ensureStoredPhoto(photo);
+    }
+    if (gravePhotoFile && gravePhotoFile.size) {
+      gravePhoto = await uploadPhoto(gravePhotoFile);
+    } else {
+      gravePhoto = await ensureStoredPhoto(gravePhoto);
     }
     const uploadedGallery = galleryFiles.length ? await Promise.all(galleryFiles.map(uploadPhoto)) : [];
     const existingGallery = String(formData.get("galleryPhotos") || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean);
@@ -2964,6 +3153,11 @@ async function savePerson(event) {
         : (formData.get("familyRole") === "Con gái" ? [] : [formData.get("spouseId")].filter(Boolean)),
       photo,
       galleryPhotos: [...storedExistingGallery, ...uploadedGallery],
+      graveLocation: formData.get("graveLocation"),
+      graveAddress: formData.get("graveAddress"),
+      graveMapUrl: formData.get("graveMapUrl"),
+      graveNotes: formData.get("graveNotes"),
+      gravePhoto,
       achievements: String(formData.get("achievements") || "").split(/\r?\n/).map((item) => item.trim()).filter(Boolean),
       notes: formData.get("notes"),
     };
@@ -2974,10 +3168,10 @@ async function savePerson(event) {
     const method = state.editingId ? "PUT" : "POST";
     const path = state.editingId ? `/api/people/${encodeURIComponent(state.editingId)}` : "/api/people";
     const saved = await api(path, { method, body: JSON.stringify(payload) });
-    await Promise.all([loadData(), loadStorageStats()]);
-    state.editingId = saved.id;
+    await Promise.all([loadData(), adminCanEditAll() ? loadStorageStats() : Promise.resolve(), loadChangeRequests()]);
+    state.editingId = saved.pendingApproval && !personById(saved.id) ? (state.currentAdmin?.personId || "") : saved.id;
     renderAdminPanel();
-    toast("Đã lưu thông tin.");
+    toast(saved.pendingApproval ? "Đã gửi Admin duyệt. Trang xem chưa thay đổi cho tới khi được duyệt." : "Đã lưu thông tin.");
   } catch (error) {
     toast(error.message);
   } finally {

@@ -13,4 +13,5 @@ data/*.tmp
 node_modules/
 .wrangler/
 .wrangler-cache/
+.wrangler-test-state/
 cloudflare-seed.sql
