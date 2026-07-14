@@ -2184,7 +2184,6 @@ function renderDetail(id) {
             <div class="chips">
               <span class="chip icon-chip">${genderIconHtml(person)}${esc(person.gender || "Khác")}</span>
               <span class="chip icon-chip ${status.className}">${icon(status.icon)}${esc(status.label)}</span>
-              ${person.deathDate && (person.graveLocation || person.graveAddress) ? `<span class="chip grave-location-chip">Phần mộ: ${esc(person.graveLocation || person.graveAddress)}</span>` : ""}
               ${order ? `<span class="chip icon-chip">${icon("order")}${esc(order)}</span>` : ""}
               ${person.birthDate ? `<span class="chip">Sinh ${esc(formatDate(person.birthDate))}</span>` : ""}
               ${person.deathDate ? `<span class="chip">Mất ${esc(formatDate(person.deathDate))}</span>` : ""}
