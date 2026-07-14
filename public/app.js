@@ -1246,7 +1246,7 @@ function kinshipResult(personA, personB) {
     <div class="kinship-answer">
       <p><strong>${esc(personA.fullName)}</strong> gọi <strong>${esc(personB.fullName)}</strong> là <b>${esc(speechAB.call)}</b>, xưng <b>${esc(speechAB.self)}</b>.</p>
       <p><strong>${esc(personB.fullName)}</strong> gọi <strong>${esc(personA.fullName)}</strong> là <b>${esc(speechBA.call)}</b>, xưng <b>${esc(speechBA.self)}</b>.</p>
-      <span>Cách gọi được suy ra theo nhánh bố/mẹ và quan hệ vợ chồng: vợ của bác gọi “Bác”, vợ của chú gọi “Mự”; người ngang hàng với ông/bà gọi “Ông/Bà” và xưng “Cháu”.</span>
+      <span>Vai Anh/Chị/Em họ được kế thừa từ thứ tự của hai nhánh tại đời tổ tiên chung, không đổi theo tuổi của người đang tra cứu. Quan hệ vợ chồng gọi theo vai của người trong họ.</span>
     </div>
   `;
 }
@@ -1330,7 +1330,9 @@ function bloodKinshipTerm(speaker, target) {
     if (!best || score < best.score) best = { ancestorId, speakerDepth, targetDepth, score };
   });
   if (!best) return "";
-  if (best.speakerDepth === best.targetDepth) return siblingTerm(speaker, target, best.speakerDepth > 1 ? " họ" : "");
+  if (best.speakerDepth === best.targetDepth) {
+    return collateralSameGenerationTerm(speaker, target, best, best.speakerDepth > 1 ? " họ" : "");
+  }
   const diff = best.speakerDepth - best.targetDepth;
   if (diff > 0) return collateralOlderTerm(speaker, target, best);
   return collateralYoungerTerm(-diff);
@@ -1365,6 +1367,42 @@ function siblingTerm(speaker, target, suffix) {
   return target.gender === "Nam" ? `Anh/Em${suffix}` : `Chị/Em${suffix}`;
 }
 
+function lineagePathToAncestor(personId, ancestorId, visited = new Set()) {
+  if (!personId || visited.has(personId)) return null;
+  visited.add(personId);
+  const person = personById(personId);
+  if (!person) return null;
+  if (person.id === ancestorId) return [person];
+  for (const parentId of [person.fatherId, person.motherId]) {
+    const parentPath = lineagePathToAncestor(parentId, ancestorId, new Set(visited));
+    if (parentPath) return [person, ...parentPath];
+  }
+  return null;
+}
+
+function branchChildUnder(descendant, ancestorId) {
+  const path = lineagePathToAncestor(descendant?.id, ancestorId);
+  return path?.length >= 2 ? path[path.length - 2] : null;
+}
+
+function lineageBranchComparison(speaker, target, ancestorId) {
+  const speakerBranch = branchChildUnder(speaker, ancestorId);
+  const targetBranch = branchChildUnder(target, ancestorId);
+  if (!speakerBranch || !targetBranch || speakerBranch.id === targetBranch.id) return 0;
+  const speakerBirth = birthSortValue(speakerBranch);
+  const targetBirth = birthSortValue(targetBranch);
+  const unknown = Number.MAX_SAFE_INTEGER;
+  if (speakerBirth === unknown || targetBirth === unknown || speakerBirth === targetBirth) return 0;
+  return speakerBirth < targetBirth ? -1 : 1;
+}
+
+function collateralSameGenerationTerm(speaker, target, relation, suffix) {
+  const branchComparison = lineageBranchComparison(speaker, target, relation.ancestorId);
+  if (branchComparison < 0) return `Em${suffix}`;
+  if (branchComparison > 0) return `${target.gender === "Nam" ? "Anh" : "Chị"}${suffix}`;
+  return target.gender === "Nam" ? `Anh/Em${suffix}` : `Chị/Em${suffix}`;
+}
+
 function collateralOlderTerm(speaker, target, relation) {
   const generationGap = relation.speakerDepth - relation.targetDepth;
   if (generationGap === 2) return target.gender === "Nam" ? "Ông" : "Bà";
@@ -1372,13 +1410,12 @@ function collateralOlderTerm(speaker, target, relation) {
   if (generationGap === 4) return "Kỵ";
   if (generationGap > 4) return "Cao tổ";
   const speakerParent = parentOnPath(speaker.id, relation.ancestorId);
-  const targetBirth = birthSortValue(target);
-  const parentBirth = birthSortValue(speakerParent || {});
-  const olderThanParent = targetBirth < parentBirth;
+  const branchComparison = lineageBranchComparison(speaker, target, relation.ancestorId);
+  const targetBranchIsOlder = branchComparison > 0;
   if (speakerParent?.gender === "Nữ") return target.gender === "Nam" ? "Cậu" : "Dì";
   if (target.gender !== "Nam") return "O";
-  if (olderThanParent) return "Bác";
-  return "Chú";
+  if (branchComparison === 0) return "Bác/Chú";
+  return targetBranchIsOlder ? "Bác" : "Chú";
 }
 
 function collateralYoungerTerm(depthDiff) {

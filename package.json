@@ -1,1 +1,1 @@
-{"scripts":{"deploy":"wrangler pages deploy deploy-public --project-name giaphadongho","test:degree":"node tests/degree-normalization.mjs"},"devDependencies":{"wrangler":"^4.107.1"}}
+{"scripts":{"deploy":"wrangler pages deploy deploy-public --project-name giaphadongho","test":"node tests/degree-normalization.mjs && node tests/kinship-seniority.mjs","test:degree":"node tests/degree-normalization.mjs","test:kinship":"node tests/kinship-seniority.mjs"},"devDependencies":{"wrangler":"^4.107.1"}}
